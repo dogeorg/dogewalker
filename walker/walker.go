@@ -7,46 +7,16 @@ import (
 	"time"
 
 	"github.com/dogeorg/doge"
-	"github.com/dogeorg/dogewalker/pkg/spec"
+	"github.com/dogeorg/dogewalker/spec"
 )
 
 const (
 	RETRY_DELAY = 5 * time.Second // for RPC and Database errors.
 )
 
-// The type of the DogeWalker output channel; either block or undo
-type BlockOrUndo struct {
-	Block *ChainBlock     // either the next block in the chain
-	Undo  *UndoForkBlocks // or an undo event (roll back blocks on a fork)
-}
-
-// NextBlock represents the next block in the blockchain.
-type ChainBlock struct {
-	Hash   string
-	Height int64
-	Block  doge.Block
-}
-
-// UndoForkBlocks represents a Fork in the Blockchain: blocks to undo on the off-chain fork
-type UndoForkBlocks struct {
-	LastValidHeight int64         // undo all blocks greater than this height
-	ResumeFromBlock string        // hash of last valid on-chain block (to resume on restart)
-	BlockHashes     []string      // hashes of blocks to be undone
-	FullBlocks      []*ChainBlock // present if FullUndoBlocks is true in WalkerOptions
-}
-
-// Configuraton for WalkTheDoge.
-type WalkerOptions struct {
-	Chain           *doge.ChainParams // chain parameters, e.g. doge.DogeMainNetChain
-	ResumeFromBlock string            // last processed block hash to begin walking from (hex)
-	Client          spec.Blockchain   // from NewCoreRPCClient()
-	TipChanged      chan string       // from TipChaser()
-	FullUndoBlocks  bool              // fully decode blocks in UndoForkBlocks (or just hash and height)
-}
-
 // Private WalkTheDoge internal state.
 type DogeWalker struct {
-	output         chan BlockOrUndo
+	output         chan spec.BlockOrUndo
 	client         spec.Blockchain
 	chain          *doge.ChainParams
 	tipChanged     chan string     // receive from TipChaser.
@@ -73,10 +43,10 @@ type DogeWalker struct {
  * Useful if you want to manually undo each transaction, rather than undoing
  * everything above `LastValidHeight` by tagging data with block-heights.
  */
-func WalkTheDoge(ctx context.Context, opts WalkerOptions) (blocks chan BlockOrUndo, err error) {
+func WalkTheDoge(ctx context.Context, opts spec.WalkerOptions) (blocks chan spec.BlockOrUndo, err error) {
 	c := DogeWalker{
 		// The larger this channel is, the more blocks we can decode-ahead.
-		output:         make(chan BlockOrUndo, 100),
+		output:         make(chan spec.BlockOrUndo, 100),
 		client:         opts.Client,
 		chain:          opts.Chain,
 		tipChanged:     opts.TipChanged,
@@ -107,7 +77,7 @@ func WalkTheDoge(ctx context.Context, opts WalkerOptions) (blocks chan BlockOrUn
 			if head.Confirmations == -1 {
 				// No longer on-chain, start with a rollback.
 				undo, nextBlock := c.undoBlocks(head)
-				c.output <- BlockOrUndo{Undo: undo}
+				c.output <- spec.BlockOrUndo{Undo: undo}
 				nextBlockHash = nextBlock // can be ""
 			}
 
@@ -149,19 +119,19 @@ func (c *DogeWalker) followTheChain(nextBlockHash string) (lastProcessed string)
 			// This block is still on-chain.
 			// Output the decoded block.
 			blockData := c.fetchBlockData(head.Hash)
-			block := &ChainBlock{
+			block := &spec.ChainBlock{
 				Hash:   head.Hash,
 				Height: head.Height,
 				Block:  doge.DecodeBlock(blockData),
 			}
-			c.output <- BlockOrUndo{Block: block}
+			c.output <- spec.BlockOrUndo{Block: block}
 			lastProcessed = block.Hash
 			nextBlockHash = head.NextBlockHash
 		} else {
 			// This block is no longer on-chain.
 			// Roll back until we find a block that is on-chain.
 			undo, nextBlock := c.undoBlocks(head)
-			c.output <- BlockOrUndo{Undo: undo}
+			c.output <- spec.BlockOrUndo{Undo: undo}
 			lastProcessed = undo.ResumeFromBlock
 			nextBlockHash = nextBlock
 		}
@@ -170,15 +140,15 @@ func (c *DogeWalker) followTheChain(nextBlockHash string) (lastProcessed string)
 	return
 }
 
-func (c *DogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, nextBlockHash string) {
+func (c *DogeWalker) undoBlocks(head spec.BlockHeader) (undo *spec.UndoForkBlocks, nextBlockHash string) {
 	// Walk backwards along the chain (in Core) to find an on-chain block.
-	undo = &UndoForkBlocks{}
+	undo = &spec.UndoForkBlocks{}
 	for {
 		// Accumulate undo info.
 		undo.BlockHashes = append(undo.BlockHashes, head.Hash)
 		if c.fullUndoBlocks {
 			blockData := c.fetchBlockData(head.Hash)
-			undo.FullBlocks = append(undo.FullBlocks, &ChainBlock{
+			undo.FullBlocks = append(undo.FullBlocks, &spec.ChainBlock{
 				Hash:   head.Hash,
 				Height: head.Height,
 				Block:  doge.DecodeBlock(blockData),

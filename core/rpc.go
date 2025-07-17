@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/dogeorg/dogewalker/pkg/spec"
+	"github.com/dogeorg/dogewalker/spec"
 )
 
 // NewCoreRPCClient returns a Dogecoin Core Node client.

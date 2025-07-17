@@ -8,9 +8,10 @@ import (
 	"syscall"
 
 	"github.com/dogeorg/doge"
-	"github.com/dogeorg/dogewalker/pkg/chaser"
-	"github.com/dogeorg/dogewalker/pkg/core"
-	"github.com/dogeorg/dogewalker/pkg/walker"
+	"github.com/dogeorg/dogewalker/chaser"
+	"github.com/dogeorg/dogewalker/core"
+	"github.com/dogeorg/dogewalker/spec"
+	"github.com/dogeorg/dogewalker/walker"
 )
 
 type Config struct {
@@ -47,7 +48,7 @@ func main() {
 	tipChanged := chaser.NewTipChaser(ctx, zmqTip, blockchain).Listen(1, true)
 
 	// Walk the blockchain.
-	blocks, err := walker.WalkTheDoge(ctx, walker.WalkerOptions{
+	blocks, err := walker.WalkTheDoge(ctx, spec.WalkerOptions{
 		Chain:           &doge.DogeMainNetChain,
 		ResumeFromBlock: "0e0bd6be24f5f426a505694bf46f60301a3a08dfdfda13854fdfe0ce7d455d6f",
 		Client:          blockchain,
