@@ -3,7 +3,8 @@ module github.com/dogeorg/dogewalker
 go 1.18
 
 require (
-	github.com/dogeorg/doge v0.0.12
+	github.com/dogeorg/doge v0.0.15
+	github.com/dogeorg/governor v1.0.3
 	github.com/pebbe/zmq4 v1.2.9
 )
 

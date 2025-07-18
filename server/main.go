@@ -1,27 +1,46 @@
 package main
 
 import (
-	"context"
+	"fmt"
 	"log"
-	"os"
-	"os/signal"
-	"syscall"
+	"time"
 
 	"github.com/dogeorg/doge"
-	"github.com/dogeorg/dogewalker/chaser"
 	"github.com/dogeorg/dogewalker/core"
-	"github.com/dogeorg/dogewalker/spec"
 	"github.com/dogeorg/dogewalker/walker"
+	"github.com/dogeorg/governor"
 )
 
 type Config struct {
-	rpcHost   string
-	rpcPort   int
-	rpcUser   string
-	rpcPass   string
-	zmqHost   string
-	zmqPort   int
-	batchSize int
+	rpcHost string
+	rpcPort int
+	rpcUser string
+	rpcPass string
+	zmqHost string
+	zmqPort int
+}
+
+type LogBlocks struct {
+	governor.ServiceCtx
+	blocks chan walker.BlockOrUndo
+}
+
+func (l *LogBlocks) Run() {
+	stop := l.Context.Done()
+	for !l.Stopping() {
+		select {
+		case <-stop:
+			return
+		case b := <-l.blocks:
+			if b.Block != nil {
+				log.Printf("[%v] block: %v", b.Height, b.Block.Hash)
+			} else if b.Undo != nil {
+				log.Printf("[%v] undo to: %v", b.Height, b.Undo.LastValidHash)
+			} else {
+				log.Printf("[%v] idle: at the tip: %v", b.Height, b.ResumeFromBlock)
+			}
+		}
+	}
 }
 
 func main() {
@@ -34,63 +53,33 @@ func main() {
 		zmqPort: 28332,
 	}
 
-	ctx, shutdown := context.WithCancel(context.Background())
+	gov := governor.New().CatchSignals().Restart(1 * time.Second)
 
 	// Core Node blockchain access.
 	blockchain := core.NewCoreRPCClient(config.rpcHost, config.rpcPort, config.rpcUser, config.rpcPass)
 
-	// Watch for new blocks.
-	zmqTip, err := core.CoreZMQListener(ctx, config.zmqHost, config.zmqPort)
-	if err != nil {
-		log.Printf("CoreZMQListener: %v", err)
-		os.Exit(1)
-	}
-	tipChanged := chaser.NewTipChaser(ctx, zmqTip, blockchain).Listen(1, true)
+	// TipChaser
+	zmqAddr := fmt.Sprintf("tcp://%v:%v", config.zmqHost, config.zmqPort)
+	zmqSvc, tipChanged := core.NewTipChaser(zmqAddr)
+	gov.Add("ZMQ", zmqSvc)
 
-	// Walk the blockchain.
-	blocks, err := walker.WalkTheDoge(ctx, spec.WalkerOptions{
+	// Get starting hash.
+	fromBlock, _ := walker.FindTheTip(gov.GlobalContext(), blockchain, 100)
+
+	// Walk the Doge.
+	walkSvc, blocks := walker.WalkTheDoge(walker.WalkerOptions{
 		Chain:           &doge.DogeMainNetChain,
-		ResumeFromBlock: "0e0bd6be24f5f426a505694bf46f60301a3a08dfdfda13854fdfe0ce7d455d6f",
+		ResumeFromBlock: fromBlock,
 		Client:          blockchain,
 		TipChanged:      tipChanged,
 	})
-	if err != nil {
-		log.Printf("WalkTheDoge: %v", err)
-		os.Exit(1)
-	}
+	gov.Add("Walk", walkSvc)
 
 	// Log new blocks.
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case b := <-blocks:
-				if b.Block != nil {
-					log.Printf("block: %v (%v)", b.Block.Hash, b.Block.Height)
-				} else {
-					log.Printf("undo to: %v (%v)", b.Undo.ResumeFromBlock, b.Undo.LastValidHeight)
-				}
-			}
-		}
-	}()
+	gov.Add("Logger", &LogBlocks{blocks: blocks})
 
-	// Hook ^C signal.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-	go func() {
-		for {
-			select {
-			case sig := <-sigCh: // sigterm/sigint caught
-				log.Printf("Caught %v signal, shutting down", sig)
-				shutdown()
-				continue
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	// Wait for shutdown.
-	<-ctx.Done()
+	// run services until interrupted.
+	gov.Start()
+	gov.WaitForShutdown()
+	fmt.Println("finished.")
 }
