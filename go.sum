@@ -4,8 +4,8 @@ github.com/decred/dcrd/crypto/blake256 v1.1.0 h1:zPMNGQCm0g4QTY27fOCorQW7EryeQ/U
 github.com/decred/dcrd/crypto/blake256 v1.1.0/go.mod h1:2OfgNZ5wDpcsFmHmCK5gZTPcCXqlm2ArzUIkw9czNJo=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0 h1:rpfIENRNNilwHwZeG5+P150SMrnNEcHYvcCuK6dPZSg=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0/go.mod h1:v57UDF4pDQJcEfFUCRop3lJL149eHGSe9Jvczhzjo/0=
-github.com/dogeorg/doge v0.0.15 h1:h9C3UrLnLnRr6924xdml6sADWFL1gNMnorsQQXm6tl8=
-github.com/dogeorg/doge v0.0.15/go.mod h1:Q9/0XChJ8EA54OrhjkWm+ySEm0zZ5M7C38do/ZCnZuY=
+github.com/dogeorg/doge v0.1.1 h1:/pZt7M3YNiNu5w83wMuT52XMVDp8f4Jwku1ciQnx+TM=
+github.com/dogeorg/doge v0.1.1/go.mod h1:Q9/0XChJ8EA54OrhjkWm+ySEm0zZ5M7C38do/ZCnZuY=
 github.com/dogeorg/governor v1.0.3 h1:ZEzCCGJILWy9l4A53wY2wlFCYzSlQe335ZwvsvI0SXc=
 github.com/dogeorg/governor v1.0.3/go.mod h1:+3y1e0TjLs963Sphk9svnzSXBlFdzQST/VNWzG6N6jw=
 github.com/mr-tron/base58 v1.2.0 h1:T/HDJBh4ZCPbU39/+c3rRvE0uKBQlU27+QI8LJ4t64o=

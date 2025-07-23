@@ -221,7 +221,7 @@ func (c *dogeWalker) followTheChain(height int64, nextBlockHash string) (lastPro
 			if !cont {
 				return "", false // stopping
 			}
-			block, valid := doge.DecodeBlock(blockData)
+			block, valid := doge.DecodeBlock(blockData, true)
 			if !valid {
 				log.Printf("DogeWalker: INVALID BLOCK! cannot parse '%s' at height %v", head.Hash, head.Height)
 				return lastProcessed, true // will resume at lastProcessed (and retry this block)
@@ -271,7 +271,7 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 			if !cont {
 				return undo, "", false // stopping
 			}
-			block, valid := doge.DecodeBlock(blockData)
+			block, valid := doge.DecodeBlock(blockData, true)
 			if !valid {
 				log.Printf("DogeWalker: INVALID BLOCK during UNDO! cannot parse '%s' at height %v", head.Hash, head.Height)
 			}
