@@ -217,14 +217,9 @@ func (c *dogeWalker) followTheChain(height int64, nextBlockHash string) (lastPro
 		if head.Confirmations != -1 {
 			// This block is still on-chain.
 			// Output the decoded block.
-			blockData, cont := c.fetchBlockData(head.Hash)
+			block, cont := c.fetchBlockData(head.Hash)
 			if !cont {
 				return "", false // stopping
-			}
-			block, valid := doge.DecodeBlock(blockData, true)
-			if !valid {
-				log.Printf("DogeWalker: INVALID BLOCK! cannot parse '%s' at height %v", head.Hash, head.Height)
-				return lastProcessed, true // will resume at lastProcessed (and retry this block)
 			}
 			cb := &ChainBlock{
 				Hash:   head.Hash,
@@ -267,13 +262,9 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 		// Accumulate undo info.
 		undo.UndoBlocks = append(undo.UndoBlocks, head.Hash)
 		if c.fullUndoBlocks {
-			blockData, cont := c.fetchBlockData(head.Hash)
+			block, cont := c.fetchBlockData(head.Hash)
 			if !cont {
 				return undo, "", false // stopping
-			}
-			block, valid := doge.DecodeBlock(blockData, true)
-			if !valid {
-				log.Printf("DogeWalker: INVALID BLOCK during UNDO! cannot parse '%s' at height %v", head.Hash, head.Height)
 			}
 			undo.FullBlocks = append(undo.FullBlocks, &ChainBlock{
 				Hash:   head.Hash,
@@ -294,35 +285,13 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 	return undo, head.NextBlockHash, true
 }
 
-func (c *dogeWalker) fetchBlockData(blockHash string) ([]byte, bool) {
+func (c *dogeWalker) fetchBlockData(blockHash string) (block doge.Block, valid bool) {
 	for {
-		hex, err := c.client.GetBlock(blockHash)
+		block, err := c.client.GetBlock(blockHash, c.Context)
 		if err != nil {
 			log.Println("DogeWalker: error retrieving block (will retry):", err)
 			if c.Sleep(RETRY_DELAY) {
-				return []byte{}, false // stopping
-			}
-		} else {
-			bytes, err := doge.HexDecode(hex)
-			if err != nil {
-				log.Println("DogeWalker: invalid block hex (will retry):", err)
-				if c.Sleep(RETRY_DELAY) {
-					return []byte{}, false // stopping
-				}
-			} else {
-				return bytes, true
-			}
-		}
-	}
-}
-
-func (c *dogeWalker) fetchBlockHeader(blockHash string) (spec.BlockHeader, bool) {
-	for {
-		block, err := c.client.GetBlockHeader(blockHash)
-		if err != nil {
-			log.Println("DogeWalker: error retrieving block header (will retry):", err)
-			if c.Sleep(RETRY_DELAY) {
-				return block, false // stopping
+				return doge.Block{}, false // stopping
 			}
 		} else {
 			return block, true
@@ -330,9 +299,23 @@ func (c *dogeWalker) fetchBlockHeader(blockHash string) (spec.BlockHeader, bool)
 	}
 }
 
+func (c *dogeWalker) fetchBlockHeader(blockHash string) (spec.BlockHeader, bool) {
+	for {
+		head, err := c.client.GetBlockHeader(blockHash, c.Context)
+		if err != nil {
+			log.Println("DogeWalker: error retrieving block header (will retry):", err)
+			if c.Sleep(RETRY_DELAY) {
+				return head, false // stopping
+			}
+		} else {
+			return head, true
+		}
+	}
+}
+
 func (c *dogeWalker) fetchBlockHash(height int64) (string, bool) {
 	for {
-		hash, err := c.client.GetBlockHash(height)
+		hash, err := c.client.GetBlockHash(height, c.Context)
 		if err != nil {
 			log.Println("DogeWalker: error retrieving block hash (will retry):", err)
 			if c.Sleep(RETRY_DELAY) {

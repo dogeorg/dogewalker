@@ -1,12 +1,50 @@
 package spec
 
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/dogeorg/doge"
+)
+
+var ErrBlockNotFound = errors.New("block-not-found")
+
 // Blockchain provides access to the Dogecoin Blockchain.
 type Blockchain interface {
-	GetBlockHeader(blockHash string) (txn BlockHeader, err error)
-	GetBlock(blockHash string) (hex string, err error)
-	GetBlockHash(blockHeight int64) (hash string, err error)
-	GetBestBlockHash() (blockHash string, err error)
-	GetBlockCount() (blockCount int64, err error)
+
+	// WaitForSync blocks until the Core Node is fully sync'd
+	// Otherwise you can see very old blocks as "new" (e.g. when core is re-indexing)
+	WaitForSync() Blockchain
+
+	// RetryMode configures the number of retries, default 0 (Infinite)
+	// Core returns a lot of spurious errors, so this should be more than 1.
+	// When Core is starting up or syncing, most APIs fail (they return 500)
+	// For a web client with client-side retries, use a low limit (2 or 3)
+	RetryMode(attempts int, delay time.Duration) Blockchain
+
+	// GetBlockHeader gets a `BlockHeader` (struct) from a block hash.
+	// The 'Confirmations' field will be -1 if the block is off-chain (not on the main chain)
+	// which is how DogeWalker detects chain reorganisation, i.e. a rollback.
+	// 'blockHash' must be in reversed-hex notation (as displayed in block explorers)
+	// Returns spec.BlockNotFound if the block doesn't exist.
+	GetBlockHeader(blockHash string, ctx context.Context) (txn BlockHeader, err error)
+
+	// GetBlock gets the raw block data from a block hash.
+	// The 'dogeorg/doge' library can decode the block data.
+	// 'blockHash' must be in reversed-hex notation (as displayed in block explorers)
+	// Returns spec.BlockNotFound if the block is not present on the Core Node, or doesn't exist.
+	GetBlock(blockHash string, ctx context.Context) (block doge.Block, err error)
+
+	// GetBlockHash gets the hash of the block at block-height on the main chain (in reversed-hex notation)
+	// Returns spec.BlockNotFound if blockHeight is above the tip of the chain.
+	GetBlockHash(blockHeight int64, ctx context.Context) (hash string, err error)
+
+	// GetBestBlockHash returns the hash of the block at the Tip of the main chain.
+	GetBestBlockHash(ctx context.Context) (blockHash string, err error)
+
+	// GetBlockCount returns the height of the block at the Tip of the main chain.
+	GetBlockCount(ctx context.Context) (blockCount int64, err error)
 }
 
 // BlockHeader from Dogecoin Core
