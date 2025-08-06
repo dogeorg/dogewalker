@@ -18,11 +18,11 @@ const (
 
 // The type of the DogeWalker output channel; either block, undo or idle.
 type BlockOrUndo struct {
-	ResumeFromBlock string          // the `ResumeFromBlock` hash to restart from (always)
-	Height          int64           // the new block height (after this message is processed)
-	Block           *ChainBlock     // either the next block in the chain
-	Undo            *UndoForkBlocks // or an undo event (roll back blocks on a fork)
-	Idle            bool            // or "idle" meaning we're at the tip of the blockchain
+	LastProcessedBlock string          // the `LastProcessedBlock` hash to resume from (always)
+	Height             int64           // the new block height (after this message is processed)
+	Block              *ChainBlock     // either the next block in the chain
+	Undo               *UndoForkBlocks // or an undo event (roll back blocks on a fork)
+	Idle               bool            // or "idle" meaning we're at the tip of the blockchain
 }
 
 // NextBlock represents the next block in the blockchain.
@@ -42,12 +42,12 @@ type UndoForkBlocks struct {
 
 // Configuraton for WalkTheDoge.
 type WalkerOptions struct {
-	Chain           *doge.ChainParams // chain parameters, e.g. doge.DogeMainNetChain
-	ResumeFromBlock string            // last processed block hash to begin walking from (hex)
-	Client          spec.Blockchain   // from NewCoreRPCClient()
-	TipChanged      chan string       // from TipChaser()
-	FullUndoBlocks  bool              // fully decode blocks in UndoForkBlocks (or just hash and height)
-	BufferBlocks    int               // number of blocks to decode ahead of the consumer (channel size, default 10)
+	Chain              *doge.ChainParams // chain parameters, e.g. doge.DogeMainNetChain
+	LastProcessedBlock string            // last processed block hash to begin walking from (hex)
+	Client             spec.Blockchain   // from NewCoreRPCClient()
+	TipChanged         chan string       // from TipChaser()
+	FullUndoBlocks     bool              // fully decode blocks in UndoForkBlocks (or just hash and height)
+	BufferBlocks       int               // number of blocks to decode ahead of the consumer (channel size, default 10)
 }
 
 /*
@@ -67,8 +67,8 @@ type WalkerOptions struct {
  * `Chain`: a ChainParams instance containing the GenesisBlock hash.
  * e.g. doge.DogeMainNetChain or use `walker.ChainFromName`
  *
- * `ResumeFromBlock`: pass the last block hash you have processed
- * (e.g. stored in your database) to start from the beginning of the
+ * `LastProcessedBlock`: the last block hash you have processed
+ * (i.e. stored in your database.) To start from the beginning of the
  * chain, pass "". Alternatively use `FindTheTip` to find a block
  * at or near the current tip of the blockchain.
  *
@@ -98,7 +98,7 @@ func WalkTheDoge(opts WalkerOptions) (service governor.Service, blocks chan Bloc
 		chain:          opts.Chain,
 		tipChanged:     opts.TipChanged,
 		fullUndoBlocks: opts.FullUndoBlocks,
-		resumeFrom:     opts.ResumeFromBlock,
+		lastProcessed:  opts.LastProcessedBlock,
 		blockInterval:  POLL_INTERVAL,
 	}
 	if opts.TipChanged != nil {
@@ -118,7 +118,7 @@ type dogeWalker struct {
 	tipChanged     chan string     // receive from TipChaser.
 	stop           <-chan struct{} // ctx.Done() channel.
 	fullUndoBlocks bool            // fully decode blocks in UndoForkBlocks
-	resumeFrom     string          // last processed block hash to begin walking from (hex)
+	lastProcessed  string          // last processed block hash to begin walking from (hex)
 	blockInterval  time.Duration   // interval for polling blocks (longer if tipChanged is set)
 	isIdle         bool            // true if the last message we sent was 'idle'
 }
@@ -138,10 +138,10 @@ func (c *dogeWalker) Run() {
 		return // service will restart
 	}
 	// Start from the specified block, or the start of the blockchain.
-	resumeFrom := c.resumeFrom
-	if resumeFrom == "" {
-		log.Printf("DogeWalker: no resume-from block hash: starting from genesis block: %v", resumeFrom)
-		resumeFrom, cont = c.followTheChain(int64(0), genesisHash)
+	lastProcessed := c.lastProcessed
+	if lastProcessed == "" {
+		log.Printf("DogeWalker: no resume-from block hash: starting from genesis block: %v", lastProcessed)
+		lastProcessed, cont = c.followTheChain(int64(0), genesisHash)
 		if !cont {
 			return // stopping
 		}
@@ -159,31 +159,33 @@ func (c *dogeWalker) Run() {
 	// Follow the chain until the service stops
 	for !c.Stopping() {
 		// Get the last-processed block header (the restart-point)
-		head, cont := c.fetchBlockHeader(resumeFrom)
+		head, cont := c.fetchBlockHeader(lastProcessed)
 		if !cont {
 			return // stopping
 		}
 		nextBlockHash := head.NextBlockHash // can be ""
+		nextHeight := head.Height
 		if head.Confirmations == -1 {
 			// Last-processed block is longer on-chain, start with a rollback.
 			undo, nextBlock, cont := c.undoBlocks(head)
 			if !cont {
 				return // stopping
 			}
-			c.output <- BlockOrUndo{Undo: undo, ResumeFromBlock: undo.LastValidHash, Height: undo.LastValidHeight}
-			resumeFrom = undo.LastValidHash // we reverted some blocks
-			nextBlockHash = nextBlock       // can be ""
+			c.output <- BlockOrUndo{Undo: undo, LastProcessedBlock: undo.LastValidHash, Height: undo.LastValidHeight}
+			lastProcessed = undo.LastValidHash // we reverted some blocks
+			nextBlockHash = nextBlock          // can be ""
+			nextHeight = undo.LastValidHeight
 		}
 
 		// Follow the Blockchain to the Tip.
 		// nextBlockHash can safely be "" on entry.
-		lastProcessed, cont := c.followTheChain(head.Height, nextBlockHash)
+		justProcessed, cont := c.followTheChain(nextHeight, nextBlockHash)
 		if !cont {
 			return // stopping
 		}
-		if lastProcessed != "" {
+		if justProcessed != "" {
 			// Made forward progress, or found a rollback.
-			resumeFrom = lastProcessed
+			lastProcessed = justProcessed
 			timerInterval = c.blockInterval // reset polling interval
 		}
 
@@ -203,14 +205,14 @@ func (c *dogeWalker) Run() {
 	}
 }
 
-func (c *dogeWalker) followTheChain(height int64, nextBlockHash string) (lastProcessed string, running bool) {
-	// Follow the chain forwards from a new block, nextBlockHash.
+func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastProcessed string, running bool) {
+	// Follow the chain forwards from a new block, nextUnprocessed.
 	// If we encounter a fork, generate an Undo.
-	for nextBlockHash != "" {
+	for nextUnprocessed != "" {
 		if c.Stopping() {
 			return "", false // stopping
 		}
-		head, cont := c.fetchBlockHeader(nextBlockHash)
+		head, cont := c.fetchBlockHeader(nextUnprocessed)
 		if !cont {
 			return "", false // stopping
 		}
@@ -226,9 +228,9 @@ func (c *dogeWalker) followTheChain(height int64, nextBlockHash string) (lastPro
 				Height: head.Height,
 				Block:  block,
 			}
-			c.output <- BlockOrUndo{Block: cb, ResumeFromBlock: head.Hash, Height: head.Height}
+			c.output <- BlockOrUndo{Block: cb, LastProcessedBlock: head.Hash, Height: head.Height}
 			lastProcessed = head.Hash // we made forward progress
-			nextBlockHash = head.NextBlockHash
+			nextUnprocessed = head.NextBlockHash
 			height = head.Height
 			c.isIdle = false
 		} else {
@@ -238,15 +240,15 @@ func (c *dogeWalker) followTheChain(height int64, nextBlockHash string) (lastPro
 			if !cont {
 				return lastProcessed, false
 			}
-			c.output <- BlockOrUndo{Undo: undo, ResumeFromBlock: undo.LastValidHash, Height: undo.LastValidHeight}
+			c.output <- BlockOrUndo{Undo: undo, LastProcessedBlock: undo.LastValidHash, Height: undo.LastValidHeight}
 			lastProcessed = undo.LastValidHash // we reverted some blocks
-			nextBlockHash = nextBlock
+			nextUnprocessed = nextBlock
 			height = undo.LastValidHeight
 			c.isIdle = false
 		}
 	}
 	if !c.isIdle {
-		c.output <- BlockOrUndo{Idle: true, ResumeFromBlock: lastProcessed, Height: height}
+		c.output <- BlockOrUndo{Idle: true, LastProcessedBlock: lastProcessed, Height: height}
 		c.isIdle = true
 	}
 	return lastProcessed, true

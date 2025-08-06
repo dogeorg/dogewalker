@@ -37,7 +37,7 @@ func (l *LogBlocks) Run() {
 			} else if b.Undo != nil {
 				log.Printf("[%v] undo to: %v", b.Height, b.Undo.LastValidHash)
 			} else {
-				log.Printf("[%v] idle: at the tip: %v", b.Height, b.ResumeFromBlock)
+				log.Printf("[%v] idle: at the tip: %v", b.Height, b.LastProcessedBlock)
 			}
 		}
 	}
@@ -64,14 +64,14 @@ func main() {
 	gov.Add("ZMQ", zmqSvc)
 
 	// Get starting hash.
-	fromBlock, _ := walker.FindTheTip(gov.GlobalContext(), blockchain, 100)
+	fromBlock, _ := walker.FindTheTip(gov.GlobalContext(), blockchain, 1000)
 
 	// Walk the Doge.
 	walkSvc, blocks := walker.WalkTheDoge(walker.WalkerOptions{
-		Chain:           &doge.DogeMainNetChain,
-		ResumeFromBlock: fromBlock,
-		Client:          blockchain,
-		TipChanged:      tipChanged,
+		Chain:              &doge.DogeMainNetChain,
+		LastProcessedBlock: fromBlock,
+		Client:             blockchain,
+		TipChanged:         tipChanged,
 	})
 	gov.Add("Walk", walkSvc)
 
