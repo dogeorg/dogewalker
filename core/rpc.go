@@ -61,6 +61,9 @@ func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (t
 			if code == BlockNotFound {
 				return spec.BlockHeader{}, spec.ErrBlockNotFound
 			}
+			if ctx.Err() != nil {
+				return spec.BlockHeader{}, spec.ErrShutdown
+			}
 			log.Printf(`[CoreRPC] GetBlockHeader: %v (will retry)`, err)
 			SleepWithContext(ctx, c.retryDelay)
 			attempts -= 1
@@ -87,6 +90,9 @@ func (c *CoreRPCClient) GetBlock(blockHash string, ctx context.Context) (block d
 			if code == BlockNotFound {
 				return doge.Block{}, spec.ErrBlockNotFound
 			}
+			if ctx.Err() != nil {
+				return doge.Block{}, spec.ErrShutdown
+			}
 			log.Printf(`[CoreRPC] GetBlock: %v (will retry)`, err)
 			SleepWithContext(ctx, c.retryDelay)
 			attempts -= 1
@@ -111,6 +117,9 @@ func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (ha
 			if code == BlockHeightOutOfRange {
 				return "", spec.ErrBlockNotFound
 			}
+			if ctx.Err() != nil {
+				return "", spec.ErrShutdown
+			}
 			log.Printf(`[CoreRPC] GetBlockHash: %v (will retry)`, err)
 			SleepWithContext(ctx, c.retryDelay)
 			attempts -= 1
@@ -126,6 +135,9 @@ func (c *CoreRPCClient) GetBestBlockHash(ctx context.Context) (blockHash string,
 	for attempts > 0 || c.attempts == 0 {
 		_, err = c.Request(ctx, "getbestblockhash", []any{}, &blockHash)
 		if err != nil {
+			if ctx.Err() != nil {
+				return "", spec.ErrShutdown
+			}
 			log.Printf(`[CoreRPC] GetBestBlockHash: %v (will retry)`, err)
 			SleepWithContext(ctx, c.retryDelay)
 			attempts -= 1
@@ -141,6 +153,9 @@ func (c *CoreRPCClient) GetBlockCount(ctx context.Context) (blockCount int64, er
 	for attempts > 0 || c.attempts == 0 {
 		_, err = c.Request(ctx, "getblockcount", []any{}, &blockCount)
 		if err != nil {
+			if ctx.Err() != nil {
+				return 0, spec.ErrShutdown
+			}
 			log.Printf(`[CoreRPC] GetBlockCount: %v (will retry)`, err)
 			SleepWithContext(ctx, c.retryDelay)
 			attempts -= 1

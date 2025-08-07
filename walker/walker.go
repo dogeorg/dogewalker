@@ -171,7 +171,13 @@ func (c *dogeWalker) Run() {
 			if !cont {
 				return // stopping
 			}
-			c.output <- BlockOrUndo{Undo: undo, LastProcessedBlock: undo.LastValidHash, Height: undo.LastValidHeight}
+			select {
+			case c.output <- BlockOrUndo{Undo: undo, LastProcessedBlock: undo.LastValidHash, Height: undo.LastValidHeight}:
+				break
+			case <-c.stop:
+				return // stopping
+			}
+
 			lastProcessed = undo.LastValidHash // we reverted some blocks
 			nextBlockHash = nextBlock          // can be ""
 			nextHeight = undo.LastValidHeight
@@ -228,7 +234,12 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 				Height: head.Height,
 				Block:  block,
 			}
-			c.output <- BlockOrUndo{Block: cb, LastProcessedBlock: head.Hash, Height: head.Height}
+			select {
+			case c.output <- BlockOrUndo{Block: cb, LastProcessedBlock: head.Hash, Height: head.Height}:
+				break
+			case <-c.stop:
+				return "", false // stopping
+			}
 			lastProcessed = head.Hash // we made forward progress
 			nextUnprocessed = head.NextBlockHash
 			height = head.Height
@@ -240,7 +251,12 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 			if !cont {
 				return lastProcessed, false
 			}
-			c.output <- BlockOrUndo{Undo: undo, LastProcessedBlock: undo.LastValidHash, Height: undo.LastValidHeight}
+			select {
+			case c.output <- BlockOrUndo{Undo: undo, LastProcessedBlock: undo.LastValidHash, Height: undo.LastValidHeight}:
+				break
+			case <-c.stop:
+				return "", false // stopping
+			}
 			lastProcessed = undo.LastValidHash // we reverted some blocks
 			nextUnprocessed = nextBlock
 			height = undo.LastValidHeight
@@ -248,7 +264,13 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 		}
 	}
 	if !c.isIdle {
-		c.output <- BlockOrUndo{Idle: true, LastProcessedBlock: lastProcessed, Height: height}
+		select {
+		case c.output <- BlockOrUndo{Idle: true, LastProcessedBlock: lastProcessed, Height: height}:
+			break
+		case <-c.stop:
+			return "", false // stopping
+		}
+
 		c.isIdle = true
 	}
 	return lastProcessed, true

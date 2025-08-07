@@ -9,6 +9,7 @@ import (
 )
 
 var ErrBlockNotFound = errors.New("block-not-found")
+var ErrShutdown = errors.New("shutting-down")
 
 // Blockchain provides access to the Dogecoin Blockchain.
 type Blockchain interface {
