@@ -279,7 +279,7 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, nextBlockHash string, running bool) {
 	// Walk backwards along the chain (in Core) to find an on-chain block.
 	undo = &UndoForkBlocks{}
-	for head.Confirmations != -1 {
+	for head.Confirmations == -1 {
 		if c.Stopping() {
 			return undo, "", false // stopping
 		}
