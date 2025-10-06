@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,13 +14,20 @@ import (
 	"time"
 
 	"github.com/dogeorg/doge"
+	"github.com/dogeorg/doge/koinu"
 	"github.com/dogeorg/dogewalker/spec"
 )
 
 // Core RPC error codes
 const (
-	BlockNotFound         = -5
-	BlockHeightOutOfRange = -8
+	InvalidAddressOrKey   = -5  // RPC_INVALID_ADDRESS_OR_KEY (invalid address or key)
+	InvalidParameter      = -8  // RPC_INVALID_PARAMETER (invalid, missing or duplicate parameter)
+	VerifyError           = -25 // RPC_VERIFY_ERROR (general error during transaction or block submission)
+	VerifyRejected        = -26 // RPC_VERIFY_REJECTED (transaction or block was rejected by network rules)
+	AlreadyInUTXOSet      = -27 // RPC_VERIFY_ALREADY_IN_UTXO_SET (transaction already in utxo set)
+	InWarmup              = -28 // RPC_IN_WARMUP (client still warming up)
+	BlockNotFound         = -5  // deprecated (use InvalidAddressOrKey instead)
+	BlockHeightOutOfRange = -8  // deprecated (use InvalidParameter instead)
 )
 
 // NewCoreRPCClient returns a Dogecoin Core Node client.
@@ -30,13 +38,13 @@ func NewCoreRPCClient(rpcHost string, rpcPort int, rpcUser string, rpcPass strin
 }
 
 type CoreRPCClient struct {
-	url        string
-	user       string
-	pass       string
-	id         atomic.Uint64 // next unique request id
-	attempts   int
-	retryDelay time.Duration
-	lock       sync.Mutex
+	url            string
+	user           string
+	pass           string
+	id             atomic.Uint64 // next unique request id
+	attemptsConfig int
+	retryDelay     time.Duration
+	lock           sync.Mutex
 }
 
 func (c *CoreRPCClient) WaitForSync() spec.Blockchain {
@@ -46,27 +54,32 @@ func (c *CoreRPCClient) WaitForSync() spec.Blockchain {
 func (c *CoreRPCClient) RetryMode(attempts int, delay time.Duration) spec.Blockchain {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	c.attempts = attempts
+	c.attemptsConfig = attempts
 	c.retryDelay = delay
 	return c
 }
 
 func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (txn spec.BlockHeader, err error) {
-	attempts := c.attempts
-	for attempts > 0 || c.attempts == 0 {
-		decode := true // to get back JSON rather than HEX
+	attempts := c.attemptsConfig
+	for {
 		var code int
+		decode := true // to get back JSON rather than HEX
 		code, err = c.Request(ctx, "getblockheader", []any{blockHash, decode}, &txn)
 		if err != nil {
-			if code == BlockNotFound {
-				return spec.BlockHeader{}, spec.ErrBlockNotFound
-			}
 			if ctx.Err() != nil {
 				return spec.BlockHeader{}, spec.ErrShutdown
 			}
-			log.Printf(`[CoreRPC] GetBlockHeader: %v (will retry)`, err)
+			if code == InvalidAddressOrKey {
+				return spec.BlockHeader{}, spec.ErrBlockNotFound
+			}
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return spec.BlockHeader{}, fmt.Errorf("[CoreRPC] GetBlockHeader: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetBlockHeader: %v (will retry)\n`, err)
 			SleepWithContext(ctx, c.retryDelay)
-			attempts -= 1
 			continue
 		}
 		break // success
@@ -75,54 +88,72 @@ func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (t
 }
 
 func (c *CoreRPCClient) GetBlock(blockHash string, ctx context.Context) (block doge.Block, err error) {
-	attempts := c.attempts
-	for attempts > 0 || c.attempts == 0 {
-		decode := false // to get back HEX
-		var hex string
-		var code int
-		var bytes []byte
-		code, err = c.Request(ctx, "getblock", []any{blockHash, decode}, &hex)
-		if err == nil {
-			// if hex is invalid, most likely a Core failure
-			bytes, err = doge.HexDecode(hex)
-		}
+	attempts := c.attemptsConfig
+	for {
+		block, err = c.requestBlock(ctx, blockHash)
 		if err != nil {
-			if code == BlockNotFound {
-				return doge.Block{}, spec.ErrBlockNotFound
-			}
 			if ctx.Err() != nil {
 				return doge.Block{}, spec.ErrShutdown
 			}
-			log.Printf(`[CoreRPC] GetBlock: %v (will retry)`, err)
+			if err == spec.ErrBlockNotFound {
+				return doge.Block{}, spec.ErrBlockNotFound
+			}
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return doge.Block{}, fmt.Errorf("[CoreRPC] GetBlock: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetBlock: %v (will retry)\n`, err)
 			SleepWithContext(ctx, c.retryDelay)
-			attempts -= 1
 			continue
-		}
-		var valid bool
-		block, valid = doge.DecodeBlock(bytes, true)
-		if !valid {
-			return doge.Block{}, fmt.Errorf("[CoreRPC] GetBlock: INVALID BLOCK! cannot parse block '%s'", blockHash)
 		}
 		break // success
 	}
 	return
 }
 
+func (c *CoreRPCClient) requestBlock(ctx context.Context, blockHash string) (doge.Block, error) {
+	var hex string
+	code, err := c.Request(ctx, "getblock", []any{blockHash, false}, &hex)
+	if err != nil {
+		if code == InvalidAddressOrKey {
+			return doge.Block{}, spec.ErrBlockNotFound
+		}
+		return doge.Block{}, fmt.Errorf("getblock: %w", err)
+	}
+	bytes, err := doge.HexDecode(hex)
+	if err != nil {
+		return doge.Block{}, fmt.Errorf("hex decode: %w", err)
+	}
+	var valid bool
+	block, valid := doge.DecodeBlock(bytes, true)
+	if !valid {
+		return doge.Block{}, fmt.Errorf("INVALID BLOCK! cannot parse block '%s'", blockHash)
+	}
+	return block, nil
+}
+
 func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (hash string, err error) {
-	attempts := c.attempts
-	for attempts > 0 || c.attempts == 0 {
+	attempts := c.attemptsConfig
+	for {
 		var code int
 		code, err = c.Request(ctx, "getblockhash", []any{blockHeight}, &hash)
 		if err != nil {
-			if code == BlockHeightOutOfRange {
+			if code == InvalidParameter { // block height out of range
 				return "", spec.ErrBlockNotFound
 			}
 			if ctx.Err() != nil {
 				return "", spec.ErrShutdown
 			}
-			log.Printf(`[CoreRPC] GetBlockHash: %v (will retry)`, err)
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return "", fmt.Errorf("[CoreRPC] GetBlockHash: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetBlockHash: %v (will retry)\n`, err)
 			SleepWithContext(ctx, c.retryDelay)
-			attempts -= 1
 			continue
 		}
 		break // success
@@ -131,16 +162,21 @@ func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (ha
 }
 
 func (c *CoreRPCClient) GetBestBlockHash(ctx context.Context) (blockHash string, err error) {
-	attempts := c.attempts
-	for attempts > 0 || c.attempts == 0 {
+	attempts := c.attemptsConfig
+	for {
 		_, err = c.Request(ctx, "getbestblockhash", []any{}, &blockHash)
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", spec.ErrShutdown
 			}
-			log.Printf(`[CoreRPC] GetBestBlockHash: %v (will retry)`, err)
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return "", fmt.Errorf("[CoreRPC] GetBestBlockHash: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetBestBlockHash: %v (will retry)\n`, err)
 			SleepWithContext(ctx, c.retryDelay)
-			attempts -= 1
 			continue
 		}
 		break // success
@@ -149,21 +185,168 @@ func (c *CoreRPCClient) GetBestBlockHash(ctx context.Context) (blockHash string,
 }
 
 func (c *CoreRPCClient) GetBlockCount(ctx context.Context) (blockCount int64, err error) {
-	attempts := c.attempts
-	for attempts > 0 || c.attempts == 0 {
+	attempts := c.attemptsConfig
+	for {
 		_, err = c.Request(ctx, "getblockcount", []any{}, &blockCount)
 		if err != nil {
 			if ctx.Err() != nil {
 				return 0, spec.ErrShutdown
 			}
-			log.Printf(`[CoreRPC] GetBlockCount: %v (will retry)`, err)
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return 0, fmt.Errorf("[CoreRPC] GetBlockCount: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetBlockCount: %v (will retry)\n`, err)
 			SleepWithContext(ctx, c.retryDelay)
-			attempts -= 1
 			continue
 		}
 		break // success
 	}
 	return
+}
+
+func (c *CoreRPCClient) GetBlockchainInfo(ctx context.Context) (info spec.BlockchainInfo, err error) {
+	attempts := c.attemptsConfig
+	for {
+		_, err = c.Request(ctx, "getblockchaininfo", []any{}, &info)
+		if err != nil {
+			if ctx.Err() != nil {
+				return spec.BlockchainInfo{}, spec.ErrShutdown
+			}
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return spec.BlockchainInfo{}, fmt.Errorf("[CoreRPC] GetBlockchainInfo: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetBlockchainInfo: %v (will retry)\n`, err)
+			SleepWithContext(ctx, c.retryDelay)
+			continue
+		}
+		break // success
+	}
+	return
+}
+
+func (c *CoreRPCClient) EstimateFee(ctx context.Context, confirmTarget int) (feePerKB koinu.Koinu, err error) {
+	attempts := c.attemptsConfig
+	for {
+		_, err = c.Request(ctx, "estimatefee", []any{confirmTarget}, &feePerKB)
+		if err != nil {
+			if ctx.Err() != nil {
+				return 0, spec.ErrShutdown
+			}
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return 0, fmt.Errorf("[CoreRPC] EstimateFee: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] EstimateFee: %v (will retry)\n`, err)
+			SleepWithContext(ctx, c.retryDelay)
+			continue
+		}
+		break // success
+	}
+	if feePerKB < 0 {
+		return 0, errors.New("[CoreRPC] EstimateFee: fee-rate is negative")
+	}
+	return
+}
+
+func (c *CoreRPCClient) GetRawMempool(ctx context.Context) (mem spec.RawMempool, err error) {
+	attempts := c.attemptsConfig
+	for {
+		_, err = c.Request(ctx, "getrawmempool", []any{true}, &mem)
+		if err != nil {
+			if ctx.Err() != nil {
+				return spec.RawMempool{}, spec.ErrShutdown
+			}
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return spec.RawMempool{}, fmt.Errorf("[CoreRPC] GetRawMempool: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetRawMempool: %v (will retry)\n`, err)
+			SleepWithContext(ctx, c.retryDelay)
+			continue
+		}
+		break // success
+	}
+	return
+}
+
+func (c *CoreRPCClient) GetRawMempoolTxList(ctx context.Context) (txlist []string, err error) {
+	attempts := c.attemptsConfig
+	for {
+		_, err = c.Request(ctx, "getrawmempool", []any{false}, &txlist)
+		if err != nil {
+			if ctx.Err() != nil {
+				return []string{}, spec.ErrShutdown
+			}
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return []string{}, fmt.Errorf("[CoreRPC] GetRawMempoolTxList: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetRawMempoolTxList: %v (will retry)\n`, err)
+			SleepWithContext(ctx, c.retryDelay)
+			continue
+		}
+		break // success
+	}
+	return
+}
+
+func (c *CoreRPCClient) GetRawTransaction(ctx context.Context, txID string) (tx doge.BlockTx, err error) {
+	attempts := c.attemptsConfig
+	for {
+		tx, err = c.requestRawTransaction(ctx, txID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return doge.BlockTx{}, spec.ErrShutdown
+			}
+			if err == spec.ErrTxNotFound {
+				return doge.BlockTx{}, spec.ErrTxNotFound
+			}
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return doge.BlockTx{}, fmt.Errorf("[CoreRPC] GetRawTransaction: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetRawTransaction: %v (will retry)\n`, err)
+			SleepWithContext(ctx, c.retryDelay)
+			continue
+		}
+		break // success
+	}
+	return
+}
+
+func (c *CoreRPCClient) requestRawTransaction(ctx context.Context, txID string) (doge.BlockTx, error) {
+	var hex string
+	code, err := c.Request(ctx, "getrawtransaction", []any{txID, false}, &hex)
+	if err != nil {
+		if code == InvalidAddressOrKey {
+			return doge.BlockTx{}, spec.ErrTxNotFound
+		}
+		return doge.BlockTx{}, fmt.Errorf("getrawtransaction: %w", err)
+	}
+	bytes, err := doge.HexDecode(hex)
+	if err != nil {
+		return doge.BlockTx{}, fmt.Errorf("hex decode: %w", err)
+	}
+	var valid bool
+	tx, valid := doge.DecodeTx(bytes, true)
+	if !valid {
+		return doge.BlockTx{}, fmt.Errorf("INVALID TRANSACTION! cannot parse '%s'", txID)
+	}
+	return tx, nil
 }
 
 func (c *CoreRPCClient) Request(ctx context.Context, method string, params []any, result any) (int, error) {
