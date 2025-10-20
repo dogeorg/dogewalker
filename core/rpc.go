@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,13 +33,20 @@ const (
 
 // NewCoreRPCClient returns a Dogecoin Core Node client.
 // Thread-safe, can be shared across Goroutines.
-func NewCoreRPCClient(rpcHost string, rpcPort int, rpcUser string, rpcPass string) spec.Blockchain {
-	url := fmt.Sprintf("http://%s:%d", rpcHost, rpcPort)
-	return &CoreRPCClient{url: url, user: rpcUser, pass: rpcPass, retryDelay: 5 * time.Second}
+func NewCoreRPCClient(rpcHostOrUrl string, rpcPort int, rpcUser string, rpcPass string) spec.Blockchain {
+	parsedUrl, err := url.Parse(rpcHostOrUrl)
+	var url string
+	if err != nil || parsedUrl.Scheme == "" {
+		url = fmt.Sprintf("http://%s:%d", rpcHostOrUrl, rpcPort)
+	} else {
+		url = rpcHostOrUrl
+	}
+
+	return &CoreRPCClient{URL: url, user: rpcUser, pass: rpcPass, retryDelay: 5 * time.Second}
 }
 
 type CoreRPCClient struct {
-	url            string
+	URL            string
 	user           string
 	pass           string
 	id             atomic.Uint64 // next unique request id
@@ -364,7 +372,7 @@ func (c *CoreRPCClient) Request(ctx context.Context, method string, params []any
 	if err != nil {
 		return 0, fmt.Errorf("json-rpc marshal request: %v", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewBuffer(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.URL, bytes.NewBuffer(payload))
 	if err != nil {
 		return 0, fmt.Errorf("json-rpc request: %v", err)
 	}
