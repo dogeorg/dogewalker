@@ -33,6 +33,8 @@ const (
 
 // NewCoreRPCClient returns a Dogecoin Core Node client.
 // Thread-safe, can be shared across Goroutines.
+// If rpcHostOrUrl is a URL, it will be used directly.
+// If rpcHostOrUrl is a hostname, it will be used with the port.
 func NewCoreRPCClient(rpcHostOrUrl string, rpcPort int, rpcUser string, rpcPass string) spec.Blockchain {
 	parsedUrl, err := url.Parse(rpcHostOrUrl)
 	var url string
