@@ -349,6 +349,29 @@ func (c *CoreRPCClient) requestRawTransaction(ctx context.Context, txID string) 
 	return tx, nil
 }
 
+func (c *CoreRPCClient) SendRawTransaction(ctx context.Context, txHex string) (err error) {
+	attempts := c.attemptsConfig
+	for {
+		_, err = c.Request(ctx, "sendrawtransaction", []any{txHex}, nil)
+		if err != nil {
+			if ctx.Err() != nil {
+				return spec.ErrShutdown
+			}
+			if c.attemptsConfig != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return fmt.Errorf("[CoreRPC] SendRawTransaction: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] SendRawTransaction: %v (will retry)\n`, err)
+			SleepWithContext(ctx, c.retryDelay)
+			continue
+		}
+		break // success
+	}
+	return
+}
+
 func (c *CoreRPCClient) Request(ctx context.Context, method string, params []any, result any) (int, error) {
 	id := c.id.Add(1) // each request should use a unique ID (workers process requests)
 	// Core only (seems to) process one request at a time, and returns spurious 500 errors

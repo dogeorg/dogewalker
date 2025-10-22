@@ -63,6 +63,9 @@ type Blockchain interface {
 
 	// GetRawTransaction returns the raw transaction data from the Core Node.
 	GetRawTransaction(ctx context.Context, txID string) (tx doge.BlockTx, err error)
+
+	// SendRawTransaction sends a raw transaction to the Core Node.
+	SendRawTransaction(ctx context.Context, txHex string) (err error)
 }
 
 // BlockHeader from Dogecoin Core
