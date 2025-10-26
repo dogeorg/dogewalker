@@ -423,6 +423,12 @@ func (c *CoreRPCClient) Request(ctx context.Context, method string, params []any
 	if rpcres.Result == nil {
 		return 0, fmt.Errorf("json-rpc missing result")
 	}
+
+	if result == nil {
+		// We are not expecting or interested in the result for some requests, do not try to unmarshal into `nil`.
+		return 0, nil
+	}
+
 	err = json.Unmarshal(*rpcres.Result, result)
 	if err != nil {
 		return 0, fmt.Errorf("json-rpc unmarshal result: %v | %v", err, string(*rpcres.Result))
