@@ -349,10 +349,10 @@ func (c *CoreRPCClient) requestRawTransaction(ctx context.Context, txID string) 
 	return tx, nil
 }
 
-func (c *CoreRPCClient) SendRawTransaction(ctx context.Context, txHex string, maxFeeRate koinu.Koinu) (txid string, err error) {
+func (c *CoreRPCClient) SendRawTransaction(ctx context.Context, txHex string) (txid string, err error) {
 	attempts := c.attemptsConfig
 	for {
-		_, err = c.Request(ctx, "sendrawtransaction", []any{txHex, maxFeeRate.String()}, &txid)
+		_, err = c.Request(ctx, "sendrawtransaction", []any{txHex}, &txid)
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", spec.ErrShutdown
