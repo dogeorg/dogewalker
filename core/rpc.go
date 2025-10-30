@@ -349,18 +349,18 @@ func (c *CoreRPCClient) requestRawTransaction(ctx context.Context, txID string) 
 	return tx, nil
 }
 
-func (c *CoreRPCClient) SendRawTransaction(ctx context.Context, txHex string) (err error) {
+func (c *CoreRPCClient) SendRawTransaction(ctx context.Context, txHex string) (txid string, err error) {
 	attempts := c.attemptsConfig
 	for {
-		_, err = c.Request(ctx, "sendrawtransaction", []any{txHex}, nil)
+		_, err = c.Request(ctx, "sendrawtransaction", []any{txHex}, &txid)
 		if err != nil {
 			if ctx.Err() != nil {
-				return spec.ErrShutdown
+				return "", spec.ErrShutdown
 			}
 			if c.attemptsConfig != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return fmt.Errorf("[CoreRPC] SendRawTransaction: %w", err)
+					return "", fmt.Errorf("[CoreRPC] SendRawTransaction: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] SendRawTransaction: %v (will retry)\n`, err)
@@ -423,6 +423,12 @@ func (c *CoreRPCClient) Request(ctx context.Context, method string, params []any
 	if rpcres.Result == nil {
 		return 0, fmt.Errorf("json-rpc missing result")
 	}
+
+	if result == nil {
+		// We are not expecting or interested in the result for some requests, do not try to unmarshal into `nil`.
+		return 0, nil
+	}
+
 	err = json.Unmarshal(*rpcres.Result, result)
 	if err != nil {
 		return 0, fmt.Errorf("json-rpc unmarshal result: %v | %v", err, string(*rpcres.Result))
