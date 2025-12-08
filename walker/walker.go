@@ -48,6 +48,7 @@ type WalkerOptions struct {
 	TipChanged         chan string       // from TipChaser()
 	FullUndoBlocks     bool              // fully decode blocks in UndoForkBlocks (or just hash and height)
 	BufferBlocks       int               // number of blocks to decode ahead of the consumer (channel size, default 10)
+	MaxRollbackDepth   int64             // maximum rollback depth before stopping (0 = unlimited)
 }
 
 /*
@@ -100,6 +101,7 @@ func WalkTheDoge(opts WalkerOptions) (service governor.Service, blocks chan Bloc
 		fullUndoBlocks: opts.FullUndoBlocks,
 		lastProcessed:  opts.LastProcessedBlock,
 		blockInterval:  POLL_INTERVAL,
+		maxRollback:    opts.MaxRollbackDepth,
 	}
 	if opts.TipChanged != nil {
 		// We will receive tipChanged notifications: use a longer polling timer
@@ -121,6 +123,7 @@ type dogeWalker struct {
 	lastProcessed  string          // last processed block hash to begin walking from (hex)
 	blockInterval  time.Duration   // interval for polling blocks (longer if tipChanged is set)
 	isIdle         bool            // true if the last message we sent was 'idle'
+	maxRollback    int64           // maximum rollback depth
 }
 
 func (c *dogeWalker) Run() {
@@ -285,6 +288,10 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 		}
 		// Accumulate undo info.
 		undo.UndoBlocks = append(undo.UndoBlocks, head.Hash)
+		if c.maxRollback > 0 && int64(len(undo.UndoBlocks)) > c.maxRollback {
+			log.Printf("DogeWalker: MaxRollbackDepth exceeded (%d > %d). Stopping service.", len(undo.UndoBlocks), c.maxRollback)
+			return undo, "", false // stopping
+		}
 		if c.fullUndoBlocks {
 			block, cont := c.fetchBlockData(head.Hash)
 			if !cont {
