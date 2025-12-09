@@ -171,7 +171,7 @@ func (c *dogeWalker) Run() {
 		if head.Confirmations == -1 {
 			// Last-processed block is longer on-chain, start with a rollback.
 			undo, nextBlock, cont := c.undoBlocks(head)
-			if !cont {
+			if !cont || undo == nil {
 				return // stopping
 			}
 			select {
@@ -251,7 +251,7 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 			// This block is no longer on-chain.
 			// Roll back until we find a block that is on-chain.
 			undo, nextBlock, cont := c.undoBlocks(head)
-			if !cont {
+			if !cont || undo == nil {
 				return lastProcessed, false
 			}
 			select {
@@ -290,7 +290,7 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 		undo.UndoBlocks = append(undo.UndoBlocks, head.Hash)
 		if c.maxRollback > 0 && int64(len(undo.UndoBlocks)) > c.maxRollback {
 			log.Printf("DogeWalker: MaxRollbackDepth exceeded (%d > %d). Stopping service.", len(undo.UndoBlocks), c.maxRollback)
-			return undo, "", false // stopping
+			return nil, "", false // stopping - return nil to prevent sending incomplete undo
 		}
 		if c.fullUndoBlocks {
 			block, cont := c.fetchBlockData(head.Hash)
