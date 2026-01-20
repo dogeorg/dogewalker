@@ -191,3 +191,26 @@ type RawTransactionScriptPubKey struct {
 	Type      string   `json:"type"`      // The script type, eg 'pubkeyhash'
 	Addresses []string `json:"addresses"` // Doge Addresses found in the script
 }
+
+// EventType is the type of event from TipChaser (ZMQ notifications)
+// Either a Block or a Tx (transaction).
+type EventType int
+
+const (
+	EventTypeNone  EventType = 0
+	EventTypeBlock EventType = 1
+	EventTypeTx    EventType = 2
+)
+
+// BlockchainEvent is a event from the blockchain.
+type BlockchainEvent struct {
+	Event EventType // The event type, Block or Tx.
+	Hash  []byte    // Hash of the block or transaction, byte-reversed (as used in Core RPC API)
+}
+
+// BlockchainListener is a listener for blockchain events.
+// Can be used in blocking or non-blocking (hint) mode.
+type BlockchainListener struct {
+	events      chan BlockchainEvent // Channel to receive events
+	nonBlocking bool                 // Discard events if the channel is full (useful when used as a hint)
+}

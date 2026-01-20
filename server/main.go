@@ -7,6 +7,7 @@ import (
 
 	"github.com/dogeorg/doge"
 	"github.com/dogeorg/dogewalker/core"
+	"github.com/dogeorg/dogewalker/spec"
 	"github.com/dogeorg/dogewalker/walker"
 	"github.com/dogeorg/governor"
 )
@@ -60,8 +61,8 @@ func main() {
 
 	// TipChaser
 	zmqAddr := fmt.Sprintf("tcp://%v:%v", config.zmqHost, config.zmqPort)
-	zmqSvc, tipChanged := core.NewTipChaser(zmqAddr)
-	gov.Add("ZMQ", zmqSvc)
+	zmqListener := make(chan spec.BlockchainEvent, 1)
+	gov.Add("ZMQ", core.NewTipChaser(zmqAddr, zmqListener, false, true))
 
 	// Get starting hash.
 	fromBlock, _ := walker.FindTheTip(gov.GlobalContext(), blockchain, 1000)
@@ -71,7 +72,7 @@ func main() {
 		Chain:              &doge.DogeMainNetChain,
 		LastProcessedBlock: fromBlock,
 		Client:             blockchain,
-		TipChanged:         tipChanged,
+		TipChanged:         zmqListener,
 	})
 	gov.Add("Walk", walkSvc)
 

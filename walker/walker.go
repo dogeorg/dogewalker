@@ -42,12 +42,12 @@ type UndoForkBlocks struct {
 
 // Configuraton for WalkTheDoge.
 type WalkerOptions struct {
-	Chain              *doge.ChainParams // chain parameters, e.g. doge.DogeMainNetChain
-	LastProcessedBlock string            // last processed block hash to begin walking from (hex)
-	Client             spec.Blockchain   // from NewCoreRPCClient()
-	TipChanged         chan string       // from TipChaser()
-	FullUndoBlocks     bool              // fully decode blocks in UndoForkBlocks (or just hash and height)
-	BufferBlocks       int               // number of blocks to decode ahead of the consumer (channel size, default 10)
+	Chain              *doge.ChainParams         // chain parameters, e.g. doge.DogeMainNetChain
+	LastProcessedBlock string                    // last processed block hash to begin walking from (hex)
+	Client             spec.Blockchain           // from NewCoreRPCClient()
+	TipChanged         chan spec.BlockchainEvent // from TipChaser()
+	FullUndoBlocks     bool                      // fully decode blocks in UndoForkBlocks (or just hash and height)
+	BufferBlocks       int                       // number of blocks to decode ahead of the consumer (channel size, default 10)
 }
 
 /*
@@ -115,12 +115,12 @@ type dogeWalker struct {
 	output         chan BlockOrUndo
 	client         spec.Blockchain
 	chain          *doge.ChainParams
-	tipChanged     chan string     // receive from TipChaser.
-	stop           <-chan struct{} // ctx.Done() channel.
-	fullUndoBlocks bool            // fully decode blocks in UndoForkBlocks
-	lastProcessed  string          // last processed block hash to begin walking from (hex)
-	blockInterval  time.Duration   // interval for polling blocks (longer if tipChanged is set)
-	isIdle         bool            // true if the last message we sent was 'idle'
+	tipChanged     chan spec.BlockchainEvent // receive from TipChaser.
+	stop           <-chan struct{}           // ctx.Done() channel.
+	fullUndoBlocks bool                      // fully decode blocks in UndoForkBlocks
+	lastProcessed  string                    // last processed block hash to begin walking from (hex)
+	blockInterval  time.Duration             // interval for polling blocks (longer if tipChanged is set)
+	isIdle         bool                      // true if the last message we sent was 'idle'
 }
 
 func (c *dogeWalker) Run() {
