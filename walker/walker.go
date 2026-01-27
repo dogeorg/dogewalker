@@ -198,15 +198,21 @@ func (c *dogeWalker) Run() {
 		// Wait for Core to signal a new Best Block (new block mined)
 		// or a shutdown request from Governor.
 		timerDrained = resetTimer(timer, timerInterval, timerDrained)
-		select {
-		case <-c.stop:
-			return // stopping
-		case <-c.tipChanged: // ignored if tipChanged is nil
-			log.Println("DogeWalker: received tip-change")
-		case <-timer.C:
-			timerDrained = true
-			timerInterval = POLL_WAITING // shorten until the next block is found
-			log.Println("DogeWalker: polling for the next block")
+		for {
+			select {
+			case <-c.stop:
+				return // stopping
+			case event := <-c.tipChanged: // ignored if tipChanged is nil
+				log.Println("DogeWalker: received tip-change")
+				if event.Event != spec.EventTypeBlock {
+					continue // ignore the event and continue waiting.
+				}
+			case <-timer.C:
+				timerDrained = true
+				timerInterval = POLL_WAITING // shorten until the next block is found
+				log.Println("DogeWalker: polling for the next block")
+			}
+			break // only loop in the 'continue' case.
 		}
 	}
 }
