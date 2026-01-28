@@ -9,4 +9,4 @@ build/dogewalker: clean
 	go build -o build/walker ./server/main.go
 
 test:
-	go test -v ./test/follower
+	go test -v ./...

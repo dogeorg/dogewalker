@@ -126,27 +126,10 @@ type dogeWalker struct {
 
 func (c *dogeWalker) Run() {
 	c.stop = c.Context.Done()
-	// Check that Core is following the same chain we want to follow.
-	genesisHash, cont := c.fetchBlockHash(0)
 	c.tipChanged = watchForTipChanges(c.stop, c.chainEvents)
+	lastProcessed, cont := c.findLastProcessedBlock()
 	if !cont {
 		return // stopping
-	}
-	if genesisHash != c.chain.GenesisBlock {
-		log.Printf("DogeWalker: WRONG CHAIN! Expected chain '%s' but Core Node does not have a matching Genesis Block hash, it has %s", c.chain.ChainName, genesisHash)
-		if c.Sleep(60 * time.Second) {
-			return // stopping
-		}
-		return // service will restart
-	}
-	// Start from the specified block, or the start of the blockchain.
-	lastProcessed := c.lastProcessed
-	if lastProcessed == "" {
-		log.Printf("DogeWalker: no resume-from block hash: starting from genesis block: %v", lastProcessed)
-		lastProcessed, cont = c.followTheChain(int64(0), genesisHash)
-		if !cont {
-			return // stopping
-		}
 	}
 	// Polling timer to discover new blocks.
 	// This operates as a fallback if we're using TipChaser via the TipChanged channel.
@@ -160,63 +143,90 @@ func (c *dogeWalker) Run() {
 	}()
 	// Follow the chain until the service stops
 	for !c.Stopping() {
-		// Get the last-processed block header (the restart-point)
-		head, cont := c.fetchBlockHeader(lastProcessed)
+		newLastProcessed, cont := c.checkForNewBlocks(lastProcessed)
 		if !cont {
 			return // stopping
 		}
-		nextBlockHash := head.NextBlockHash // can be ""
-		nextHeight := head.Height
-		if head.Confirmations == -1 {
-			// Last-processed block is longer on-chain, start with a rollback.
-			undo, nextBlock, cont := c.undoBlocks(head)
-			if !cont {
-				return // stopping
-			}
-			select {
-			case c.output <- BlockOrUndo{Undo: undo, LastProcessedBlock: undo.LastValidHash, Height: undo.LastValidHeight}:
-				break
-			case <-c.stop:
-				return // stopping
-			}
-
-			lastProcessed = undo.LastValidHash // we reverted some blocks
-			nextBlockHash = nextBlock          // can be ""
-			nextHeight = undo.LastValidHeight
-		}
-
-		// Follow the Blockchain to the Tip.
-		// nextBlockHash can safely be "" on entry.
-		justProcessed, cont := c.followTheChain(nextHeight, nextBlockHash)
-		if !cont {
-			return // stopping
-		}
-		if justProcessed != "" {
-			// Made forward progress, or found a rollback.
-			lastProcessed = justProcessed
+		if newLastProcessed != lastProcessed {
+			lastProcessed = newLastProcessed
 			timerInterval = c.blockInterval // reset polling interval
 		}
-
 		// Wait for Core to signal a new Best Block (new block mined)
 		// or a shutdown request from Governor.
 		timerDrained = resetTimer(timer, timerInterval, timerDrained)
-		for {
-			select {
-			case <-c.stop:
-				return // stopping
-			case event := <-c.tipChanged: // ignored if tipChanged is nil
-				log.Println("DogeWalker: received tip-change")
-				if event.Event != spec.EventTypeBlock {
-					continue // ignore the event and continue waiting.
-				}
-			case <-timer.C:
-				timerDrained = true
-				timerInterval = POLL_WAITING // shorten until the next block is found
-				log.Println("DogeWalker: polling for the next block")
-			}
-			break // only loop in the 'continue' case.
+		select {
+		case <-c.stop:
+			return // stopping
+		case <-c.tipChanged:
+			log.Println("DogeWalker: received tip-change")
+		case <-timer.C:
+			timerDrained = true
+			timerInterval = POLL_WAITING // shorten until the next block is found
+			log.Println("DogeWalker: polling for the next block")
 		}
 	}
+}
+
+func (c *dogeWalker) findLastProcessedBlock() (lastProcessed string, running bool) {
+	// Check that Core is following the same chain we want to follow.
+	genesisHash, cont := c.fetchBlockHash(0)
+	if !cont {
+		return // stopping
+	}
+	if genesisHash != c.chain.GenesisBlock {
+		log.Printf("[DogeWalker] WRONG CHAIN! Expected chain '%s' but Core Node does not have a matching Genesis Block hash, it has %s", c.chain.ChainName, genesisHash)
+		c.Sleep(60 * time.Second)
+		return "", false // service will restart
+	}
+	// Start from the specified block, or the start of the blockchain.
+	lastProcessed = c.lastProcessed
+	if lastProcessed == "" {
+		log.Printf("[DogeWalker] no resume-from block hash: starting from genesis block: %v", lastProcessed)
+		lastProcessed, cont = c.processGenesisBlock()
+		if !cont {
+			return "", false // stopping
+		}
+	}
+	return lastProcessed, true
+}
+
+func (c *dogeWalker) checkForNewBlocks(lastProcessed string) (newLastProcessed string, running bool) {
+	// Get the last-processed block header (the restart-point)
+	head, cont := c.fetchBlockHeader(lastProcessed)
+	if !cont {
+		return "", false // stopping
+	}
+	nextBlockHash := head.NextBlockHash // can be ""
+	nextHeight := head.Height
+	if head.Confirmations == -1 {
+		// Last-processed block is longer on-chain, start with a rollback.
+		undo, nextBlock, cont := c.undoBlocks(head)
+		if !cont {
+			return "", false // stopping
+		}
+		select {
+		case c.output <- BlockOrUndo{Undo: undo, LastProcessedBlock: undo.LastValidHash, Height: undo.LastValidHeight}:
+			break
+		case <-c.stop:
+			return "", false // stopping
+		}
+
+		lastProcessed = undo.LastValidHash // we reverted some blocks
+		nextBlockHash = nextBlock          // can be ""
+		nextHeight = undo.LastValidHeight
+	}
+
+	// Follow the Blockchain to the Tip.
+	// nextBlockHash can safely be "" on entry.
+	justProcessed, cont := c.followTheChain(nextHeight, nextBlockHash)
+	if !cont {
+		return "", false // stopping
+	}
+	if justProcessed != "" {
+		// Made forward progress, or found a rollback.
+		lastProcessed = justProcessed
+	}
+	return lastProcessed, true
 }
 
 func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastProcessed string, running bool) {
@@ -254,6 +264,19 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 			c.isIdle = false
 		} else {
 			// This block is no longer on-chain.
+			// Check if core is performing initial sync, or re-indexing.
+			stopping := c.client.WaitForSync(c.Context)
+			if stopping {
+				return "", false // stopping
+			}
+			// Re-fetch the block header to check if it's still off-chain.
+			head, cont = c.fetchBlockHeader(nextUnprocessed)
+			if !cont {
+				return "", false // stopping
+			}
+			if head.Confirmations != -1 {
+				continue // block is now on-chain, go back and retry.
+			}
 			// Roll back until we find a block that is on-chain.
 			undo, nextBlock, cont := c.undoBlocks(head)
 			if !cont {
@@ -278,7 +301,6 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 		case <-c.stop:
 			return "", false // stopping
 		}
-
 		c.isIdle = true
 	}
 	return lastProcessed, true
@@ -315,6 +337,40 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 	undo.LastValidHeight = head.Height
 	undo.LastValidHash = head.Hash
 	return undo, head.NextBlockHash, true
+}
+
+func (c *dogeWalker) processGenesisBlock() (lastProcessed string, running bool) {
+	for !c.Stopping() {
+		head, cont := c.fetchBlockHeader(c.chain.GenesisBlock)
+		if !cont {
+			return "", false // stopping
+		}
+		if head.Confirmations == -1 {
+			log.Printf("[DogeWalker] genesis block is not on-chain! waiting for sync...")
+			stopping := c.client.WaitForSync(c.Context)
+			if stopping {
+				return "", false // stopping
+			}
+			c.Sleep(RETRY_DELAY)
+			continue
+		}
+		block, cont := c.fetchBlockData(head.Hash)
+		if !cont {
+			return "", false // stopping
+		}
+		cb := &ChainBlock{
+			Hash:   head.Hash,
+			Height: head.Height,
+			Block:  block,
+		}
+		select {
+		case c.output <- BlockOrUndo{Block: cb, LastProcessedBlock: head.Hash, Height: head.Height}:
+		case <-c.stop:
+			return "", false // stopping
+		}
+		return head.Hash, true // success
+	}
+	return
 }
 
 func (c *dogeWalker) fetchBlockData(blockHash string) (block doge.Block, valid bool) {

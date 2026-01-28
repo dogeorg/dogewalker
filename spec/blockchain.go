@@ -17,8 +17,9 @@ var ErrShutdown = errors.New("shutting-down")
 type Blockchain interface {
 
 	// WaitForSync blocks until the Core Node is fully sync'd
-	// Otherwise you can see very old blocks as "new" (e.g. when core is re-indexing)
-	WaitForSync() Blockchain
+	// Otherwise recently processed blocks can be seen as "off-chain" (e.g. when core is re-indexing)
+	// Returns true if the context is cancelled, false otherwise.
+	WaitForSync(ctx context.Context) bool
 
 	// RetryMode configures the number of retries, default 0 (Infinite)
 	// Core returns a lot of spurious errors, so this should be more than 1.

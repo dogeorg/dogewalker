@@ -18,6 +18,8 @@ import (
 	"github.com/dogeorg/dogewalker/spec"
 )
 
+const WAIT_FOR_SYNC_RETRY_DELAY = 30 * time.Second
+
 // Core RPC error codes
 const (
 	InvalidAddressOrKey   = -5  // RPC_INVALID_ADDRESS_OR_KEY (invalid address or key)
@@ -47,8 +49,30 @@ type CoreRPCClient struct {
 	lock           sync.Mutex
 }
 
-func (c *CoreRPCClient) WaitForSync() spec.Blockchain {
-	return c
+func (c *CoreRPCClient) WaitForSync(ctx context.Context) bool {
+	for {
+		info, err := c.GetBlockchainInfo(ctx)
+		if err != nil {
+			if err == spec.ErrShutdown {
+				return true // stopping
+			}
+			log.Printf(`[CoreRPC] WaitForSync: %v (will retry)\n`, err)
+			SleepWithContext(ctx, WAIT_FOR_SYNC_RETRY_DELAY)
+			continue
+		}
+		if info.InitialBlockDownload {
+			log.Printf(`[CoreRPC] WaitForSync: initial block download in progress, waiting...\n`)
+			SleepWithContext(ctx, WAIT_FOR_SYNC_RETRY_DELAY)
+			continue
+		}
+		threshold := info.Headers - 10
+		if info.Blocks < threshold {
+			log.Printf(`[CoreRPC] WaitForSync: blocks are behind headers, waiting...\n`)
+			SleepWithContext(ctx, WAIT_FOR_SYNC_RETRY_DELAY)
+			continue
+		}
+		return false // done, core node is synced
+	}
 }
 
 func (c *CoreRPCClient) RetryMode(attempts int, delay time.Duration) spec.Blockchain {
