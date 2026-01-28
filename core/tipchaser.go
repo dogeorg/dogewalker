@@ -23,11 +23,10 @@ const ERROR_DELAY = 1 * time.Second // for ZMQ errors.
  *
  * `coreAddrZMQ` is the TCP address of Core ZMQ, e.g. "tcp://127.0.0.1:28332"
  */
-func NewTipChaser(coreAddrZMQ string, listener chan spec.BlockchainEvent, includeTx bool, nonBlocking bool) governor.Service {
+func NewTipChaser(coreAddrZMQ string, listener chan spec.BlockchainEvent, includeTx bool) governor.Service {
 	c := tipChaser{
 		coreAddrZMQ: coreAddrZMQ,
 		listener:    listener,
-		nonBlocking: nonBlocking,
 		includeTx:   includeTx,
 	}
 	return &c
@@ -37,7 +36,6 @@ type tipChaser struct {
 	governor.ServiceCtx
 	coreAddrZMQ string
 	listener    chan spec.BlockchainEvent
-	nonBlocking bool
 	includeTx   bool
 }
 
@@ -84,26 +82,12 @@ func (c *tipChaser) Run() {
 			blockid := msg[1]
 			if !bytes.Equal(blockid, lastid) {
 				lastid = blockid
-				if c.nonBlocking {
-					select {
-					case c.listener <- spec.BlockchainEvent{Event: spec.EventTypeBlock, Hash: blockid}:
-					default:
-					}
-				} else {
-					c.listener <- spec.BlockchainEvent{Event: spec.EventTypeBlock, Hash: blockid}
-				}
+				c.listener <- spec.BlockchainEvent{Event: spec.EventTypeBlock, Hash: blockid}
 			}
 		case "hashtx":
 			if c.includeTx {
 				txid := msg[1]
-				if c.nonBlocking {
-					select {
-					case c.listener <- spec.BlockchainEvent{Event: spec.EventTypeTx, Hash: txid}:
-					default:
-					}
-				} else {
-					c.listener <- spec.BlockchainEvent{Event: spec.EventTypeTx, Hash: txid}
-				}
+				c.listener <- spec.BlockchainEvent{Event: spec.EventTypeTx, Hash: txid}
 			}
 		default:
 		}

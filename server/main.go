@@ -62,7 +62,14 @@ func main() {
 	// TipChaser
 	zmqAddr := fmt.Sprintf("tcp://%v:%v", config.zmqHost, config.zmqPort)
 	zmqListener := make(chan spec.BlockchainEvent, 1)
-	gov.Add("ZMQ", core.NewTipChaser(zmqAddr, zmqListener, false, true))
+	gov.Add("ZMQ", core.NewTipChaser(zmqAddr, zmqListener, true))
+
+	// Splitter
+	splitterSvc, channels := core.NewSplitter(zmqListener, []int{10, 10})
+	gov.Add("Splitter", splitterSvc)
+
+	// Logger
+	gov.Add("Logger", core.NewLogger(channels[0]))
 
 	// Get starting hash.
 	fromBlock, _ := walker.FindTheTip(gov.GlobalContext(), blockchain, 1000)
@@ -72,7 +79,7 @@ func main() {
 		Chain:              &doge.DogeMainNetChain,
 		LastProcessedBlock: fromBlock,
 		Client:             blockchain,
-		TipChanged:         zmqListener,
+		ChainEvents:        channels[1],
 	})
 	gov.Add("Walk", walkSvc)
 

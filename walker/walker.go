@@ -42,12 +42,12 @@ type UndoForkBlocks struct {
 
 // Configuraton for WalkTheDoge.
 type WalkerOptions struct {
-	Chain              *doge.ChainParams         // chain parameters, e.g. doge.DogeMainNetChain
-	LastProcessedBlock string                    // last processed block hash to begin walking from (hex)
-	Client             spec.Blockchain           // from NewCoreRPCClient()
-	TipChanged         chan spec.BlockchainEvent // from TipChaser()
-	FullUndoBlocks     bool                      // fully decode blocks in UndoForkBlocks (or just hash and height)
-	BufferBlocks       int                       // number of blocks to decode ahead of the consumer (channel size, default 10)
+	Chain              *doge.ChainParams           // chain parameters, e.g. doge.DogeMainNetChain
+	LastProcessedBlock string                      // last processed block hash to begin walking from (hex)
+	Client             spec.Blockchain             // from NewCoreRPCClient()
+	ChainEvents        <-chan spec.BlockchainEvent // from TipChaser()
+	FullUndoBlocks     bool                        // fully decode blocks in UndoForkBlocks (or just hash and height)
+	BufferBlocks       int                         // number of blocks to decode ahead of the consumer (channel size, default 10)
 }
 
 /*
@@ -96,12 +96,12 @@ func WalkTheDoge(opts WalkerOptions) (service governor.Service, blocks chan Bloc
 		output:         make(chan BlockOrUndo, chanSize),
 		client:         opts.Client,
 		chain:          opts.Chain,
-		tipChanged:     opts.TipChanged,
+		chainEvents:    opts.ChainEvents,
 		fullUndoBlocks: opts.FullUndoBlocks,
 		lastProcessed:  opts.LastProcessedBlock,
 		blockInterval:  POLL_INTERVAL,
 	}
-	if opts.TipChanged != nil {
+	if opts.ChainEvents != nil {
 		// We will receive tipChanged notifications: use a longer polling timer
 		// as a fallback in case the tipChanged source stops working.
 		c.blockInterval = POLL_FALLBACK
@@ -115,18 +115,20 @@ type dogeWalker struct {
 	output         chan BlockOrUndo
 	client         spec.Blockchain
 	chain          *doge.ChainParams
-	tipChanged     chan spec.BlockchainEvent // receive from TipChaser.
-	stop           <-chan struct{}           // ctx.Done() channel.
-	fullUndoBlocks bool                      // fully decode blocks in UndoForkBlocks
-	lastProcessed  string                    // last processed block hash to begin walking from (hex)
-	blockInterval  time.Duration             // interval for polling blocks (longer if tipChanged is set)
-	isIdle         bool                      // true if the last message we sent was 'idle'
+	chainEvents    <-chan spec.BlockchainEvent // receive from TipChaser.
+	tipChanged     <-chan bool                 // from watchForTipChanges().
+	stop           <-chan struct{}             // ctx.Done() channel.
+	fullUndoBlocks bool                        // fully decode blocks in UndoForkBlocks
+	lastProcessed  string                      // last processed block hash to begin walking from (hex)
+	blockInterval  time.Duration               // interval for polling blocks (longer if tipChanged is set)
+	isIdle         bool                        // true if the last message we sent was 'idle'
 }
 
 func (c *dogeWalker) Run() {
 	c.stop = c.Context.Done()
 	// Check that Core is following the same chain we want to follow.
 	genesisHash, cont := c.fetchBlockHash(0)
+	c.tipChanged = watchForTipChanges(c.stop, c.chainEvents)
 	if !cont {
 		return // stopping
 	}
@@ -371,4 +373,30 @@ func resetTimer(t *time.Timer, d time.Duration, isDrained bool) bool {
 	t.Reset(d)
 	isDrained = false
 	return isDrained
+}
+
+// Starts a goroutine to watch for tip changes.
+// Returns a channel that signals when a tip change has occurred.
+// This is used as a hint to wake up the main loop to check for new blocks.
+func watchForTipChanges(stop <-chan struct{}, events <-chan spec.BlockchainEvent) (tipChanged <-chan bool) {
+	changed := make(chan bool, 1)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case e := <-events:
+				// Ignore Tx events (we only care about block events).
+				if e.Event == spec.EventTypeBlock {
+					// Perform a non-blocking send.
+					// We only need to know if a tip change has occurred.
+					select {
+					case changed <- true:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	return changed
 }
