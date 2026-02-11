@@ -25,11 +25,18 @@ type BlockOrUndo struct {
 	Idle               bool            // or "idle" meaning we're at the tip of the blockchain
 }
 
+type BlockMetadata struct {
+	MedianTime uint64  // The median block time in seconds since UNIX epoch (Jan 1 1970 GMT)
+	Difficulty float64 // The difficulty
+	ChainWork  string  // Expected number of hashes required to produce the chain up to this block (hex)
+}
+
 // NextBlock represents the next block in the blockchain.
 type ChainBlock struct {
-	Hash   string     // hash of the block
-	Height int64      // height of the block
-	Block  doge.Block // decoded block header and transactions
+	Hash     string        // hash of the block
+	Height   int64         // height of the block
+	Block    doge.Block    // decoded block header and transactions
+	Metadata BlockMetadata // block metadata from Core Node
 }
 
 // UndoForkBlocks represents a Fork in the Blockchain: blocks to undo on the off-chain fork
@@ -251,6 +258,11 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 				Hash:   head.Hash,
 				Height: head.Height,
 				Block:  block,
+				Metadata: BlockMetadata{
+					MedianTime: head.MedianTime,
+					Difficulty: head.Difficulty,
+					ChainWork:  head.ChainWork,
+				},
 			}
 			select {
 			case c.output <- BlockOrUndo{Block: cb, LastProcessedBlock: head.Hash, Height: head.Height}:
@@ -324,6 +336,11 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 				Hash:   head.Hash,
 				Height: head.Height,
 				Block:  block,
+				Metadata: BlockMetadata{
+					MedianTime: head.MedianTime,
+					Difficulty: head.Difficulty,
+					ChainWork:  head.ChainWork,
+				},
 			})
 		}
 		// Fetch the block header for the previous block.
@@ -362,6 +379,11 @@ func (c *dogeWalker) processGenesisBlock() (lastProcessed string, running bool) 
 			Hash:   head.Hash,
 			Height: head.Height,
 			Block:  block,
+			Metadata: BlockMetadata{
+				MedianTime: head.MedianTime,
+				Difficulty: head.Difficulty,
+				ChainWork:  head.ChainWork,
+			},
 		}
 		select {
 		case c.output <- BlockOrUndo{Block: cb, LastProcessedBlock: head.Hash, Height: head.Height}:
