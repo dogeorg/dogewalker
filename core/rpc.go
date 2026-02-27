@@ -150,10 +150,9 @@ func (c *CoreRPCClient) requestBlock(ctx context.Context, blockHash string) (dog
 	if err != nil {
 		return doge.Block{}, fmt.Errorf("hex decode: %w", err)
 	}
-	var valid bool
-	block, valid := doge.DecodeBlock(bytes, true)
-	if !valid {
-		return doge.Block{}, fmt.Errorf("INVALID BLOCK! cannot parse block '%s'", blockHash)
+	block, err := doge.DecodeBlockErr(bytes, true)
+	if err != nil {
+		return doge.Block{}, fmt.Errorf("INVALID BLOCK! cannot parse block '%s': %w", blockHash, err)
 	}
 	return block, nil
 }
@@ -365,10 +364,9 @@ func (c *CoreRPCClient) requestRawTransaction(ctx context.Context, txID string) 
 	if err != nil {
 		return doge.BlockTx{}, fmt.Errorf("hex decode: %w", err)
 	}
-	var valid bool
-	tx, valid := doge.DecodeTx(bytes, true)
-	if !valid {
-		return doge.BlockTx{}, fmt.Errorf("INVALID TRANSACTION! cannot parse '%s'", txID)
+	tx, err := doge.DecodeTxErr(bytes, true)
+	if err != nil {
+		return doge.BlockTx{}, fmt.Errorf("INVALID TRANSACTION! cannot parse '%s': %w", txID, err)
 	}
 	return tx, nil
 }
