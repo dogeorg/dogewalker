@@ -29,6 +29,7 @@ type BlockMetadata struct {
 	MedianTime uint64  // The median block time in seconds since UNIX epoch (Jan 1 1970 GMT)
 	Difficulty float64 // The difficulty
 	ChainWork  string  // Expected number of hashes required to produce the chain up to this block (hex)
+	BlockSize  int     // The size of the block in bytes
 }
 
 // NextBlock represents the next block in the blockchain.
@@ -250,7 +251,7 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 		if head.Confirmations != -1 {
 			// This block is still on-chain.
 			// Output the decoded block.
-			block, cont := c.fetchBlockData(head.Hash)
+			block, size, cont := c.fetchBlockData(head.Hash)
 			if !cont {
 				return "", false // stopping
 			}
@@ -262,6 +263,7 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 					MedianTime: head.MedianTime,
 					Difficulty: head.Difficulty,
 					ChainWork:  head.ChainWork,
+					BlockSize:  size,
 				},
 			}
 			select {
@@ -328,7 +330,7 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 		// Accumulate undo info.
 		undo.UndoBlocks = append(undo.UndoBlocks, head.Hash)
 		if c.fullUndoBlocks {
-			block, cont := c.fetchBlockData(head.Hash)
+			block, size, cont := c.fetchBlockData(head.Hash)
 			if !cont {
 				return undo, "", false // stopping
 			}
@@ -340,6 +342,7 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 					MedianTime: head.MedianTime,
 					Difficulty: head.Difficulty,
 					ChainWork:  head.ChainWork,
+					BlockSize:  size,
 				},
 			})
 		}
@@ -371,7 +374,7 @@ func (c *dogeWalker) processGenesisBlock() (lastProcessed string, running bool) 
 			c.Sleep(RETRY_DELAY)
 			continue
 		}
-		block, cont := c.fetchBlockData(head.Hash)
+		block, size, cont := c.fetchBlockData(head.Hash)
 		if !cont {
 			return "", false // stopping
 		}
@@ -383,6 +386,7 @@ func (c *dogeWalker) processGenesisBlock() (lastProcessed string, running bool) 
 				MedianTime: head.MedianTime,
 				Difficulty: head.Difficulty,
 				ChainWork:  head.ChainWork,
+				BlockSize:  size,
 			},
 		}
 		select {
@@ -395,16 +399,16 @@ func (c *dogeWalker) processGenesisBlock() (lastProcessed string, running bool) 
 	return
 }
 
-func (c *dogeWalker) fetchBlockData(blockHash string) (block doge.Block, valid bool) {
+func (c *dogeWalker) fetchBlockData(blockHash string) (block doge.Block, size int, valid bool) {
 	for {
-		block, err := c.client.GetBlock(blockHash, c.Context)
+		block, size, err := c.client.GetBlock(blockHash, c.Context)
 		if err != nil {
 			log.Println("DogeWalker: error retrieving block (will retry):", err)
 			if c.Sleep(RETRY_DELAY) {
-				return doge.Block{}, false // stopping
+				return doge.Block{}, 0, false // stopping
 			}
 		} else {
-			return block, true
+			return block, size, true
 		}
 	}
 }

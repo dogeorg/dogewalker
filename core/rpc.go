@@ -111,21 +111,21 @@ func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (t
 	return
 }
 
-func (c *CoreRPCClient) GetBlock(blockHash string, ctx context.Context) (block doge.Block, err error) {
+func (c *CoreRPCClient) GetBlock(blockHash string, ctx context.Context) (block doge.Block, size int, err error) {
 	attempts := c.attemptsConfig
 	for {
-		block, err = c.requestBlock(ctx, blockHash)
+		block, size, err = c.requestBlock(ctx, blockHash)
 		if err != nil {
 			if ctx.Err() != nil {
-				return doge.Block{}, spec.ErrShutdown
+				return doge.Block{}, 0, spec.ErrShutdown
 			}
 			if err == spec.ErrBlockNotFound {
-				return doge.Block{}, spec.ErrBlockNotFound
+				return doge.Block{}, 0, spec.ErrBlockNotFound
 			}
 			if c.attemptsConfig != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return doge.Block{}, fmt.Errorf("[CoreRPC] GetBlock: %w", err)
+					return doge.Block{}, 0, fmt.Errorf("[CoreRPC] GetBlock: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetBlock: %v (will retry)\n`, err)
@@ -137,24 +137,24 @@ func (c *CoreRPCClient) GetBlock(blockHash string, ctx context.Context) (block d
 	return
 }
 
-func (c *CoreRPCClient) requestBlock(ctx context.Context, blockHash string) (doge.Block, error) {
+func (c *CoreRPCClient) requestBlock(ctx context.Context, blockHash string) (doge.Block, int, error) {
 	var hex string
 	code, err := c.Request(ctx, "getblock", []any{blockHash, false}, &hex)
 	if err != nil {
 		if code == InvalidAddressOrKey {
-			return doge.Block{}, spec.ErrBlockNotFound
+			return doge.Block{}, 0, spec.ErrBlockNotFound
 		}
-		return doge.Block{}, fmt.Errorf("getblock: %w", err)
+		return doge.Block{}, 0, fmt.Errorf("getblock: %w", err)
 	}
 	bytes, err := doge.HexDecode(hex)
 	if err != nil {
-		return doge.Block{}, fmt.Errorf("hex decode: %w", err)
+		return doge.Block{}, 0, fmt.Errorf("hex decode: %w", err)
 	}
 	block, err := doge.DecodeBlockErr(bytes, true)
 	if err != nil {
-		return doge.Block{}, fmt.Errorf("INVALID BLOCK! cannot parse block '%s': %w", blockHash, err)
+		return doge.Block{}, 0, fmt.Errorf("INVALID BLOCK! cannot parse block '%s': %w", blockHash, err)
 	}
-	return block, nil
+	return block, len(bytes), nil
 }
 
 func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (hash string, err error) {

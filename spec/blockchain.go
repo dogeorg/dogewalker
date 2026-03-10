@@ -38,7 +38,7 @@ type Blockchain interface {
 	// The 'dogeorg/doge' library can decode the block data.
 	// 'blockHash' must be in reversed-hex notation (as displayed in block explorers)
 	// Returns spec.BlockNotFound if the block is not present on the Core Node, or doesn't exist.
-	GetBlock(blockHash string, ctx context.Context) (block doge.Block, err error)
+	GetBlock(blockHash string, ctx context.Context) (block doge.Block, size int, err error)
 
 	// GetBlockHash gets the hash of the block at block-height on the main chain (in reversed-hex notation)
 	// Returns spec.BlockNotFound if blockHeight is above the tip of the chain.

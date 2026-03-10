@@ -13,6 +13,7 @@ import (
 type MockChain struct {
 	headers map[string]spec.BlockHeader
 	blocks  map[string]doge.Block
+	sizes   map[string]int
 	heights map[int64]string
 }
 
@@ -35,12 +36,16 @@ func (m *MockChain) GetBlockHeader(blockHash string, ctx context.Context) (spec.
 	return h, nil
 }
 
-func (m *MockChain) GetBlock(blockHash string, ctx context.Context) (doge.Block, error) {
+func (m *MockChain) GetBlock(blockHash string, ctx context.Context) (doge.Block, int, error) {
 	b, ok := m.blocks[blockHash]
 	if !ok {
-		return doge.Block{}, spec.ErrBlockNotFound
+		return doge.Block{}, 0, spec.ErrBlockNotFound
 	}
-	return b, nil
+	size := 0
+	if s, ok := m.sizes[blockHash]; ok {
+		size = s
+	}
+	return b, size, nil
 }
 
 func (m *MockChain) GetBlockHash(blockHeight int64, ctx context.Context) (string, error) {
