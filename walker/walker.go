@@ -138,7 +138,7 @@ type dogeWalker struct {
 
 func (c *dogeWalker) Run() {
 	c.stop = c.Context.Done()
-	c.rpcContext = core.ContextWithCoreRPCRetry(c.rpcContext, WALKER_RETRY_COUNT, WALKER_RETRY_DELAY, "DogeWalker")
+	c.rpcContext = core.ContextWithCoreRPCRetry(c.Context, WALKER_RETRY_COUNT, WALKER_RETRY_DELAY, "DogeWalker")
 	c.tipChanged = watchForTipChanges(c.stop, c.chainEvents)
 	lastProcessed, cont := c.findLastProcessedBlock()
 	if !cont {
