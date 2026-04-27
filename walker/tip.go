@@ -40,7 +40,7 @@ func FindTheTip(ctx context.Context, client spec.Blockchain, blocksBelowTip int6
 
 func fetchBlockHash(ctx context.Context, client spec.Blockchain, height int64) string {
 	for {
-		hash, err := client.GetBlockHash(height, ctx)
+		hash, err := client.GetBlockHash(ctx, height)
 		if err != nil {
 			log.Println("FindTheTip: error retrieving block hash (will retry):", err)
 			sleepWithCancel(ctx, RETRY_DELAY)

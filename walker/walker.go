@@ -1,6 +1,7 @@
 package walker
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 const (
 	RETRY_DELAY     = 5 * time.Second        // for Database errors.
-	RPC_RETRY_COUNT = 3                      // make 3 attempts, then report error.
+	RPC_RETRY_COUNT = 0                      // keep trying until the context is cancelled.
 	RPC_RETRY_DELAY = 500 * time.Millisecond // for RPC retries.
 	POLL_INTERVAL   = 60 * time.Second       // average time between blocks.
 	POLL_WAITING    = 10 * time.Second       // polling interval when a block is due.
@@ -123,6 +124,7 @@ func WalkTheDoge(opts WalkerOptions) (service governor.Service, blocks chan Bloc
 // dogeWalker is the internal state.
 type dogeWalker struct {
 	governor.ServiceCtx
+	rpcContext     context.Context
 	output         chan BlockOrUndo
 	client         spec.Blockchain
 	chain          *doge.ChainParams
@@ -136,7 +138,7 @@ type dogeWalker struct {
 }
 
 func (c *dogeWalker) Run() {
-	c.Context = core.ContextWithCoreRPCRetry(c.Context, RPC_RETRY_COUNT, RPC_RETRY_DELAY)
+	c.rpcContext = core.ContextWithCoreRPCRetry(c.Context, RPC_RETRY_COUNT, RPC_RETRY_DELAY, "DogeWalker")
 	c.stop = c.Context.Done()
 	c.tipChanged = watchForTipChanges(c.stop, c.chainEvents)
 	lastProcessed, cont := c.findLastProcessedBlock()
@@ -181,9 +183,9 @@ func (c *dogeWalker) Run() {
 
 func (c *dogeWalker) findLastProcessedBlock() (lastProcessed string, running bool) {
 	// Check that Core is following the same chain we want to follow.
-	genesisHash, cont := c.fetchBlockHash(0)
-	if !cont {
-		return // stopping
+	genesisHash, err := c.client.GetBlockHash(c.rpcContext, 0)
+	if err != nil {
+		return "", false // stopping (report/retry handled by c.client)
 	}
 	if genesisHash != c.chain.GenesisBlock {
 		log.Printf("[DogeWalker] WRONG CHAIN! Expected chain '%s' but Core Node does not have a matching Genesis Block hash, it has %s", c.chain.ChainName, genesisHash)
@@ -194,9 +196,10 @@ func (c *dogeWalker) findLastProcessedBlock() (lastProcessed string, running boo
 	lastProcessed = c.lastProcessed
 	if lastProcessed == "" {
 		log.Printf("[DogeWalker] no resume-from block hash: starting from genesis block: %v", lastProcessed)
+		cont := true
 		lastProcessed, cont = c.processGenesisBlock()
 		if !cont {
-			return "", false // stopping
+			return "", false // stopping (report/retry handled by c.client)
 		}
 	}
 	return lastProcessed, true
@@ -204,9 +207,9 @@ func (c *dogeWalker) findLastProcessedBlock() (lastProcessed string, running boo
 
 func (c *dogeWalker) checkForNewBlocks(lastProcessed string) (newLastProcessed string, running bool) {
 	// Get the last-processed block header (the restart-point)
-	head, cont := c.fetchBlockHeader(lastProcessed)
-	if !cont {
-		return "", false // stopping
+	head, err := c.client.GetBlockHeader(c.rpcContext, lastProcessed)
+	if err != nil {
+		return "", false // stopping (report/retry handled by c.client)
 	}
 	nextBlockHash := head.NextBlockHash // can be ""
 	nextHeight := head.Height
@@ -248,16 +251,16 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 		if c.Stopping() {
 			return "", false // stopping
 		}
-		head, cont := c.fetchBlockHeader(nextUnprocessed)
-		if !cont {
-			return "", false // stopping
+		head, err := c.client.GetBlockHeader(c.rpcContext, nextUnprocessed)
+		if err != nil {
+			return "", false // stopping (report/retry handled by c.client)
 		}
 		if head.Confirmations != -1 {
 			// This block is still on-chain.
 			// Output the decoded block.
-			block, size, cont := c.fetchBlockData(head.Hash)
-			if !cont {
-				return "", false // stopping
+			block, size, err := c.client.GetBlock(c.rpcContext, head.Hash)
+			if err != nil {
+				return "", false // stopping (report/retry handled by c.client)
 			}
 			cb := &ChainBlock{
 				Hash:   head.Hash,
@@ -283,14 +286,14 @@ func (c *dogeWalker) followTheChain(height int64, nextUnprocessed string) (lastP
 		} else {
 			// This block is no longer on-chain.
 			// Check if core is performing initial sync, or re-indexing.
-			stopping := c.client.WaitForSync(c.Context)
+			stopping := c.client.WaitForSync(c.rpcContext)
 			if stopping {
 				return "", false // stopping
 			}
 			// Re-fetch the block header to check if it's still off-chain.
-			head, cont = c.fetchBlockHeader(nextUnprocessed)
-			if !cont {
-				return "", false // stopping
+			head, err := c.client.GetBlockHeader(c.rpcContext, nextUnprocessed)
+			if err != nil {
+				return "", false // stopping (report/retry handled by c.client)
 			}
 			if head.Confirmations != -1 {
 				continue // block is now on-chain, go back and retry.
@@ -334,9 +337,9 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 		// Accumulate undo info.
 		undo.UndoBlocks = append(undo.UndoBlocks, head.Hash)
 		if c.fullUndoBlocks {
-			block, size, cont := c.fetchBlockData(head.Hash)
-			if !cont {
-				return undo, "", false // stopping
+			block, size, err := c.client.GetBlock(c.rpcContext, head.Hash)
+			if err != nil {
+				return undo, "", false // stopping (report/retry handled by c.client)
 			}
 			undo.FullBlocks = append(undo.FullBlocks, &ChainBlock{
 				Hash:   head.Hash,
@@ -351,10 +354,10 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 			})
 		}
 		// Fetch the block header for the previous block.
-		cont := true
-		head, cont = c.fetchBlockHeader(head.PreviousBlockHash)
-		if !cont {
-			return undo, "", false // stopping
+		var err error
+		head, err = c.client.GetBlockHeader(c.rpcContext, head.PreviousBlockHash)
+		if err != nil {
+			return undo, "", false // stopping (report/retry handled by c.client)
 		}
 	}
 	// Found an on-chain block: stop rolling back.
@@ -365,22 +368,22 @@ func (c *dogeWalker) undoBlocks(head spec.BlockHeader) (undo *UndoForkBlocks, ne
 
 func (c *dogeWalker) processGenesisBlock() (lastProcessed string, running bool) {
 	for !c.Stopping() {
-		head, cont := c.fetchBlockHeader(c.chain.GenesisBlock)
-		if !cont {
-			return "", false // stopping
+		head, err := c.client.GetBlockHeader(c.rpcContext, c.chain.GenesisBlock)
+		if err != nil {
+			return "", false // stopping (report/retry handled by c.client)
 		}
 		if head.Confirmations == -1 {
 			log.Printf("[DogeWalker] genesis block is not on-chain! waiting for sync...")
-			stopping := c.client.WaitForSync(c.Context)
+			stopping := c.client.WaitForSync(c.rpcContext)
 			if stopping {
 				return "", false // stopping
 			}
 			c.Sleep(RETRY_DELAY)
 			continue
 		}
-		block, size, cont := c.fetchBlockData(head.Hash)
-		if !cont {
-			return "", false // stopping
+		block, size, err := c.client.GetBlock(c.rpcContext, head.Hash)
+		if err != nil {
+			return "", false // stopping (report/retry handled by c.client)
 		}
 		cb := &ChainBlock{
 			Hash:   head.Hash,
@@ -401,48 +404,6 @@ func (c *dogeWalker) processGenesisBlock() (lastProcessed string, running bool) 
 		return head.Hash, true // success
 	}
 	return
-}
-
-func (c *dogeWalker) fetchBlockData(blockHash string) (block doge.Block, size int, valid bool) {
-	for {
-		block, size, err := c.client.GetBlock(blockHash, c.Context)
-		if err != nil {
-			log.Println("DogeWalker: error retrieving block (will retry):", err)
-			if c.Sleep(RETRY_DELAY) {
-				return doge.Block{}, 0, false // stopping
-			}
-		} else {
-			return block, size, true
-		}
-	}
-}
-
-func (c *dogeWalker) fetchBlockHeader(blockHash string) (spec.BlockHeader, bool) {
-	for {
-		head, err := c.client.GetBlockHeader(blockHash, c.Context)
-		if err != nil {
-			log.Println("DogeWalker: error retrieving block header (will retry):", err)
-			if c.Sleep(RETRY_DELAY) {
-				return head, false // stopping
-			}
-		} else {
-			return head, true
-		}
-	}
-}
-
-func (c *dogeWalker) fetchBlockHash(height int64) (string, bool) {
-	for {
-		hash, err := c.client.GetBlockHash(height, c.Context)
-		if err != nil {
-			log.Println("DogeWalker: error retrieving block hash (will retry):", err)
-			if c.Sleep(RETRY_DELAY) {
-				return "", false // stopping
-			}
-		} else {
-			return hash, true
-		}
-	}
 }
 
 func resetTimer(t *time.Timer, d time.Duration, isDrained bool) bool {
