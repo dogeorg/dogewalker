@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/dogeorg/doge"
-	"github.com/dogeorg/dogewalker/core"
-	"github.com/dogeorg/dogewalker/spec"
-	"github.com/dogeorg/dogewalker/walker"
+	"github.com/dogeorg/dogewalker/v2/core"
+	"github.com/dogeorg/dogewalker/v2/spec"
+	"github.com/dogeorg/dogewalker/v2/walker"
 	"github.com/dogeorg/governor"
 )
 

@@ -1,7 +1,7 @@
 package core
 
 import (
-	"github.com/dogeorg/dogewalker/spec"
+	"github.com/dogeorg/dogewalker/v2/spec"
 	"github.com/dogeorg/governor"
 )
 

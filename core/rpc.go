@@ -15,7 +15,7 @@ import (
 
 	"github.com/dogeorg/doge"
 	"github.com/dogeorg/doge/koinu"
-	"github.com/dogeorg/dogewalker/spec"
+	"github.com/dogeorg/dogewalker/v2/spec"
 )
 
 const WAIT_FOR_SYNC_RETRY_DELAY = 30 * time.Second

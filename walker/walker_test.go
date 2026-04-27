@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/dogeorg/doge"
-	"github.com/dogeorg/dogewalker/spec"
-	"github.com/dogeorg/dogewalker/test_utils"
+	"github.com/dogeorg/dogewalker/v2/spec"
+	"github.com/dogeorg/dogewalker/v2/test_utils"
 )
 
 // Helpers

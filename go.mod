@@ -1,4 +1,4 @@
-module github.com/dogeorg/dogewalker
+module github.com/dogeorg/dogewalker/v2
 
 go 1.18
 

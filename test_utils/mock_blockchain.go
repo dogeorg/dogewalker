@@ -6,7 +6,7 @@ import (
 
 	"github.com/dogeorg/doge"
 	"github.com/dogeorg/doge/koinu"
-	"github.com/dogeorg/dogewalker/spec"
+	"github.com/dogeorg/dogewalker/v2/spec"
 )
 
 // MockChain is a simple in-memory implementation of spec.Blockchain for tests.

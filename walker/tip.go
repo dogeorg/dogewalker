@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/dogeorg/dogewalker/spec"
+	"github.com/dogeorg/dogewalker/v2/spec"
 )
 
 /*
