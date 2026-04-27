@@ -47,7 +47,7 @@ func ContextWithCoreRPCRetry(ctx context.Context, retryCount int, retryDelay tim
 	if retryCount < 0 {
 		retryCount = 0
 	}
-	return context.WithValue(ctx, coreRPCRetryKey{}, coreRPCRetry{retryCount: retryCount, retryDelay: retryDelay, taskName: taskName})
+	return context.WithValue(ctx, CoreRPCRetryKey{}, CoreRPCRetry{retryCount: retryCount, retryDelay: retryDelay, taskName: taskName})
 }
 
 type CoreRPCClient struct {
@@ -59,15 +59,15 @@ type CoreRPCClient struct {
 }
 
 // unique type for the context key
-type coreRPCRetryKey struct{}
-type coreRPCRetry struct {
+type CoreRPCRetryKey struct{}
+type CoreRPCRetry struct {
 	retryCount int
 	retryDelay time.Duration
 	taskName   string
 }
 
 func getRetryConfig(ctx context.Context) (retryCount int, retryDelay time.Duration, taskName string) {
-	retryConfig, ok := ctx.Value(coreRPCRetryKey{}).(coreRPCRetry)
+	retryConfig, ok := ctx.Value(CoreRPCRetryKey{}).(CoreRPCRetry)
 	if !ok {
 		return DefaultRetryCount, DefaultRetryDelay, "CoreRPC"
 	}

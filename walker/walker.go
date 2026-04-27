@@ -12,12 +12,11 @@ import (
 )
 
 const (
-	RETRY_DELAY     = 5 * time.Second        // for Database errors.
-	RPC_RETRY_COUNT = 0                      // keep trying until the context is cancelled.
-	RPC_RETRY_DELAY = 500 * time.Millisecond // for RPC retries.
-	POLL_INTERVAL   = 60 * time.Second       // average time between blocks.
-	POLL_WAITING    = 10 * time.Second       // polling interval when a block is due.
-	POLL_FALLBACK   = 90 * time.Second       // fallback interval when using TipChaser.
+	WALKER_RETRY_COUNT = 0                // keep trying until the context is cancelled.
+	WALKER_RETRY_DELAY = 5 * time.Second  // for RPC retries.
+	POLL_INTERVAL      = 60 * time.Second // average time between blocks.
+	POLL_WAITING       = 10 * time.Second // polling interval when a block is due.
+	POLL_FALLBACK      = 90 * time.Second // fallback interval when using TipChaser.
 )
 
 // The type of the DogeWalker output channel; either block, undo or idle.
@@ -138,8 +137,8 @@ type dogeWalker struct {
 }
 
 func (c *dogeWalker) Run() {
-	c.rpcContext = core.ContextWithCoreRPCRetry(c.Context, RPC_RETRY_COUNT, RPC_RETRY_DELAY, "DogeWalker")
 	c.stop = c.Context.Done()
+	c.rpcContext = core.ContextWithCoreRPCRetry(c.rpcContext, WALKER_RETRY_COUNT, WALKER_RETRY_DELAY, "DogeWalker")
 	c.tipChanged = watchForTipChanges(c.stop, c.chainEvents)
 	lastProcessed, cont := c.findLastProcessedBlock()
 	if !cont {
@@ -378,7 +377,7 @@ func (c *dogeWalker) processGenesisBlock() (lastProcessed string, running bool) 
 			if stopping {
 				return "", false // stopping
 			}
-			c.Sleep(RETRY_DELAY)
+			c.Sleep(WALKER_RETRY_DELAY)
 			continue
 		}
 		block, size, err := c.client.GetBlock(c.rpcContext, head.Hash)
