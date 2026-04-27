@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -30,8 +29,8 @@ const (
 	InWarmup              = -28                    // RPC_IN_WARMUP (client still warming up)
 	BlockNotFound         = -5                     // deprecated (use InvalidAddressOrKey instead)
 	BlockHeightOutOfRange = -8                     // deprecated (use InvalidParameter instead)
-	DefaultRetryCount     = 5                      // make 5 attempts by default (Core returns spurious errors)
-	DefaultRetryDelay     = 500 * time.Millisecond // 500ms between retries
+	DefaultRetryCount     = 3                      // make 3 attempts by default (Core returns spurious errors)
+	DefaultRetryDelay     = 200 * time.Millisecond // 200ms between retries (minimise server load)
 )
 
 // NewCoreRPCClient returns a Dogecoin Core Node client.
@@ -44,11 +43,11 @@ func NewCoreRPCClient(rpcHost string, rpcPort int, rpcUser string, rpcPass strin
 // ContextWithCoreRPCRetry returns a new context with a retry configuration.
 // retryCount is the number of times to retry the request, default 5 attempts (0 = infinite)
 // retryDelay is the delay between retries, default 5 seconds
-func ContextWithCoreRPCRetry(ctx context.Context, retryCount int, retryDelay time.Duration) context.Context {
+func ContextWithCoreRPCRetry(ctx context.Context, retryCount int, retryDelay time.Duration, taskName string) context.Context {
 	if retryCount < 0 {
 		retryCount = 0
 	}
-	return context.WithValue(ctx, coreRPCRetryKey{}, coreRPCRetry{retryCount: retryCount, retryDelay: retryDelay})
+	return context.WithValue(ctx, coreRPCRetryKey{}, coreRPCRetry{retryCount: retryCount, retryDelay: retryDelay, taskName: taskName})
 }
 
 type CoreRPCClient struct {
@@ -64,14 +63,15 @@ type coreRPCRetryKey struct{}
 type coreRPCRetry struct {
 	retryCount int
 	retryDelay time.Duration
+	taskName   string
 }
 
-func getRetryConfig(ctx context.Context) (retryCount int, retryDelay time.Duration) {
+func getRetryConfig(ctx context.Context) (retryCount int, retryDelay time.Duration, taskName string) {
 	retryConfig, ok := ctx.Value(coreRPCRetryKey{}).(coreRPCRetry)
 	if !ok {
-		return DefaultRetryCount, DefaultRetryDelay
+		return DefaultRetryCount, DefaultRetryDelay, "CoreRPC"
 	}
-	return retryConfig.retryCount, retryConfig.retryDelay
+	return retryConfig.retryCount, retryConfig.retryDelay, retryConfig.taskName
 }
 
 func (c *CoreRPCClient) WaitForSync(ctx context.Context) bool {
@@ -100,8 +100,8 @@ func (c *CoreRPCClient) WaitForSync(ctx context.Context) bool {
 	}
 }
 
-func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (txn spec.BlockHeader, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+func (c *CoreRPCClient) GetBlockHeader(ctx context.Context, blockHash string) (txn spec.BlockHeader, err error) {
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		var code int
@@ -117,10 +117,10 @@ func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (t
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return spec.BlockHeader{}, fmt.Errorf("[CoreRPC] GetBlockHeader: %w", err)
+					return spec.BlockHeader{}, fmt.Errorf("[%s] GetBlockHeader: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetBlockHeader: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetBlockHeader: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -129,8 +129,8 @@ func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (t
 	return
 }
 
-func (c *CoreRPCClient) GetBlock(blockHash string, ctx context.Context) (block doge.Block, size int, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+func (c *CoreRPCClient) GetBlock(ctx context.Context, blockHash string) (block doge.Block, size int, err error) {
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		block, size, err = c.requestBlock(ctx, blockHash)
@@ -144,10 +144,10 @@ func (c *CoreRPCClient) GetBlock(blockHash string, ctx context.Context) (block d
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return doge.Block{}, 0, fmt.Errorf("[CoreRPC] GetBlock: %w", err)
+					return doge.Block{}, 0, fmt.Errorf("[%s] GetBlock: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetBlock: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetBlock: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -176,8 +176,8 @@ func (c *CoreRPCClient) requestBlock(ctx context.Context, blockHash string) (dog
 	return block, len(bytes), nil
 }
 
-func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (hash string, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+func (c *CoreRPCClient) GetBlockHash(ctx context.Context, blockHeight int64) (hash string, err error) {
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		var code int
@@ -192,10 +192,10 @@ func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (ha
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return "", fmt.Errorf("[CoreRPC] GetBlockHash: %w", err)
+					return "", fmt.Errorf("[%s] GetBlockHash: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetBlockHash: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetBlockHash: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -205,7 +205,7 @@ func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (ha
 }
 
 func (c *CoreRPCClient) GetBestBlockHash(ctx context.Context) (blockHash string, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getbestblockhash", []any{}, &blockHash)
@@ -216,10 +216,10 @@ func (c *CoreRPCClient) GetBestBlockHash(ctx context.Context) (blockHash string,
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return "", fmt.Errorf("[CoreRPC] GetBestBlockHash: %w", err)
+					return "", fmt.Errorf("[%s] GetBestBlockHash: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetBestBlockHash: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetBestBlockHash: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -229,7 +229,7 @@ func (c *CoreRPCClient) GetBestBlockHash(ctx context.Context) (blockHash string,
 }
 
 func (c *CoreRPCClient) GetBlockCount(ctx context.Context) (blockCount int64, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getblockcount", []any{}, &blockCount)
@@ -240,10 +240,10 @@ func (c *CoreRPCClient) GetBlockCount(ctx context.Context) (blockCount int64, er
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return 0, fmt.Errorf("[CoreRPC] GetBlockCount: %w", err)
+					return 0, fmt.Errorf("[%s] GetBlockCount: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetBlockCount: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetBlockCount: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -253,7 +253,7 @@ func (c *CoreRPCClient) GetBlockCount(ctx context.Context) (blockCount int64, er
 }
 
 func (c *CoreRPCClient) GetBlockchainInfo(ctx context.Context) (info spec.BlockchainInfo, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getblockchaininfo", []any{}, &info)
@@ -264,10 +264,10 @@ func (c *CoreRPCClient) GetBlockchainInfo(ctx context.Context) (info spec.Blockc
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return spec.BlockchainInfo{}, fmt.Errorf("[CoreRPC] GetBlockchainInfo: %w", err)
+					return spec.BlockchainInfo{}, fmt.Errorf("[%s] GetBlockchainInfo: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetBlockchainInfo: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetBlockchainInfo: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -277,7 +277,7 @@ func (c *CoreRPCClient) GetBlockchainInfo(ctx context.Context) (info spec.Blockc
 }
 
 func (c *CoreRPCClient) EstimateFee(ctx context.Context, confirmTarget int) (feePerKB koinu.Koinu, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "estimatefee", []any{confirmTarget}, &feePerKB)
@@ -288,23 +288,23 @@ func (c *CoreRPCClient) EstimateFee(ctx context.Context, confirmTarget int) (fee
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return 0, fmt.Errorf("[CoreRPC] EstimateFee: %w", err)
+					return 0, fmt.Errorf("[%s] EstimateFee: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] EstimateFee: %v (will retry)\n`, err)
+			log.Printf(`[%s] EstimateFee: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
 	}
 	if feePerKB < 0 {
-		return 0, errors.New("[CoreRPC] EstimateFee: fee-rate is negative")
+		return 0, fmt.Errorf("[%s] EstimateFee: fee-rate is negative", taskName)
 	}
 	return
 }
 
 func (c *CoreRPCClient) GetRawMempool(ctx context.Context) (mem spec.RawMempool, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getrawmempool", []any{true}, &mem)
@@ -315,10 +315,10 @@ func (c *CoreRPCClient) GetRawMempool(ctx context.Context) (mem spec.RawMempool,
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return spec.RawMempool{}, fmt.Errorf("[CoreRPC] GetRawMempool: %w", err)
+					return spec.RawMempool{}, fmt.Errorf("[%s] GetRawMempool: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetRawMempool: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetRawMempool: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -328,7 +328,7 @@ func (c *CoreRPCClient) GetRawMempool(ctx context.Context) (mem spec.RawMempool,
 }
 
 func (c *CoreRPCClient) GetRawMempoolTxList(ctx context.Context) (txlist []string, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getrawmempool", []any{false}, &txlist)
@@ -339,10 +339,10 @@ func (c *CoreRPCClient) GetRawMempoolTxList(ctx context.Context) (txlist []strin
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return []string{}, fmt.Errorf("[CoreRPC] GetRawMempoolTxList: %w", err)
+					return []string{}, fmt.Errorf("[%s] GetRawMempoolTxList: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetRawMempoolTxList: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetRawMempoolTxList: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -353,7 +353,7 @@ func (c *CoreRPCClient) GetRawMempoolTxList(ctx context.Context) (txlist []strin
 
 // GetMempoolEntry returns a single mempool entry (transaction) from the Core Node.
 func (c *CoreRPCClient) GetMempoolEntry(ctx context.Context, txID string) (tx spec.RawMempoolTx, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getmempoolentry", []any{txID}, &tx)
@@ -364,10 +364,10 @@ func (c *CoreRPCClient) GetMempoolEntry(ctx context.Context, txID string) (tx sp
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return spec.RawMempoolTx{}, fmt.Errorf("[CoreRPC] GetMempoolEntry: %w", err)
+					return spec.RawMempoolTx{}, fmt.Errorf("[%s] GetMempoolEntry: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetMempoolEntry: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetMempoolEntry: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -377,7 +377,7 @@ func (c *CoreRPCClient) GetMempoolEntry(ctx context.Context, txID string) (tx sp
 }
 
 func (c *CoreRPCClient) GetRawTransaction(ctx context.Context, txID string) (tx doge.BlockTx, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		tx, err = c.requestRawTransaction(ctx, txID)
@@ -391,10 +391,10 @@ func (c *CoreRPCClient) GetRawTransaction(ctx context.Context, txID string) (tx 
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return doge.BlockTx{}, fmt.Errorf("[CoreRPC] GetRawTransaction: %w", err)
+					return doge.BlockTx{}, fmt.Errorf("[%s] GetRawTransaction: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] GetRawTransaction: %v (will retry)\n`, err)
+			log.Printf(`[%s] GetRawTransaction: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}
@@ -424,7 +424,7 @@ func (c *CoreRPCClient) requestRawTransaction(ctx context.Context, txID string) 
 }
 
 func (c *CoreRPCClient) SendRawTransaction(ctx context.Context, txHex string) (txid string, err error) {
-	retryCount, retryDelay := getRetryConfig(ctx)
+	retryCount, retryDelay, taskName := getRetryConfig(ctx)
 	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "sendrawtransaction", []any{txHex}, &txid)
@@ -435,10 +435,10 @@ func (c *CoreRPCClient) SendRawTransaction(ctx context.Context, txHex string) (t
 			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
-					return "", fmt.Errorf("[CoreRPC] SendRawTransaction: %w", err)
+					return "", fmt.Errorf("[%s] SendRawTransaction: %w", taskName, err)
 				}
 			}
-			log.Printf(`[CoreRPC] SendRawTransaction: %v (will retry)\n`, err)
+			log.Printf(`[%s] SendRawTransaction: %v (will retry)\n`, taskName, err)
 			SleepWithContext(ctx, retryDelay)
 			continue
 		}

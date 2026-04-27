@@ -28,7 +28,7 @@ func NewMockChain() *MockChain {
 func (m *MockChain) WaitForSync(ctx context.Context) bool                        { return false }
 func (m *MockChain) RetryMode(attempts int, delay time.Duration) spec.Blockchain { return m }
 
-func (m *MockChain) GetBlockHeader(blockHash string, ctx context.Context) (spec.BlockHeader, error) {
+func (m *MockChain) GetBlockHeader(ctx context.Context, blockHash string) (spec.BlockHeader, error) {
 	h, ok := m.headers[blockHash]
 	if !ok {
 		return spec.BlockHeader{}, spec.ErrBlockNotFound
@@ -36,7 +36,7 @@ func (m *MockChain) GetBlockHeader(blockHash string, ctx context.Context) (spec.
 	return h, nil
 }
 
-func (m *MockChain) GetBlock(blockHash string, ctx context.Context) (doge.Block, int, error) {
+func (m *MockChain) GetBlock(ctx context.Context, blockHash string) (doge.Block, int, error) {
 	b, ok := m.blocks[blockHash]
 	if !ok {
 		return doge.Block{}, 0, spec.ErrBlockNotFound
@@ -48,7 +48,7 @@ func (m *MockChain) GetBlock(blockHash string, ctx context.Context) (doge.Block,
 	return b, size, nil
 }
 
-func (m *MockChain) GetBlockHash(blockHeight int64, ctx context.Context) (string, error) {
+func (m *MockChain) GetBlockHash(ctx context.Context, blockHeight int64) (string, error) {
 	h, ok := m.heights[blockHeight]
 	if !ok {
 		return "", spec.ErrBlockNotFound

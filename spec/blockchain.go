@@ -26,17 +26,17 @@ type Blockchain interface {
 	// which is how DogeWalker detects chain reorganisation, i.e. a rollback.
 	// 'blockHash' must be in reversed-hex notation (as displayed in block explorers)
 	// Returns spec.BlockNotFound if the block doesn't exist.
-	GetBlockHeader(blockHash string, ctx context.Context) (txn BlockHeader, err error)
+	GetBlockHeader(ctx context.Context, blockHash string) (txn BlockHeader, err error)
 
 	// GetBlock gets the raw block data from a block hash.
 	// The 'dogeorg/doge' library can decode the block data.
 	// 'blockHash' must be in reversed-hex notation (as displayed in block explorers)
 	// Returns spec.BlockNotFound if the block is not present on the Core Node, or doesn't exist.
-	GetBlock(blockHash string, ctx context.Context) (block doge.Block, size int, err error)
+	GetBlock(ctx context.Context, blockHash string) (block doge.Block, size int, err error)
 
 	// GetBlockHash gets the hash of the block at block-height on the main chain (in reversed-hex notation)
 	// Returns spec.BlockNotFound if blockHeight is above the tip of the chain.
-	GetBlockHash(blockHeight int64, ctx context.Context) (hash string, err error)
+	GetBlockHash(ctx context.Context, blockHeight int64) (hash string, err error)
 
 	// GetBestBlockHash returns the hash of the block at the Tip of the main chain.
 	GetBestBlockHash(ctx context.Context) (blockHash string, err error)
