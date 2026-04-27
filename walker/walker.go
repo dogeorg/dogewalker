@@ -5,15 +5,18 @@ import (
 	"time"
 
 	"github.com/dogeorg/doge"
+	"github.com/dogeorg/dogewalker/v2/core"
 	"github.com/dogeorg/dogewalker/v2/spec"
 	"github.com/dogeorg/governor"
 )
 
 const (
-	RETRY_DELAY   = 5 * time.Second  // for RPC and Database errors.
-	POLL_INTERVAL = 60 * time.Second // average time between blocks.
-	POLL_WAITING  = 10 * time.Second // polling interval when a block is due.
-	POLL_FALLBACK = 90 * time.Second // fallback interval when using TipChaser.
+	RETRY_DELAY     = 5 * time.Second        // for Database errors.
+	RPC_RETRY_COUNT = 3                      // make 3 attempts, then report error.
+	RPC_RETRY_DELAY = 500 * time.Millisecond // for RPC retries.
+	POLL_INTERVAL   = 60 * time.Second       // average time between blocks.
+	POLL_WAITING    = 10 * time.Second       // polling interval when a block is due.
+	POLL_FALLBACK   = 90 * time.Second       // fallback interval when using TipChaser.
 )
 
 // The type of the DogeWalker output channel; either block, undo or idle.
@@ -133,6 +136,7 @@ type dogeWalker struct {
 }
 
 func (c *dogeWalker) Run() {
+	c.Context = core.ContextWithCoreRPCRetry(c.Context, RPC_RETRY_COUNT, RPC_RETRY_DELAY)
 	c.stop = c.Context.Done()
 	c.tipChanged = watchForTipChanges(c.stop, c.chainEvents)
 	lastProcessed, cont := c.findLastProcessedBlock()
