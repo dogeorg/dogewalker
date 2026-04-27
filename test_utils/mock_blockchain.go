@@ -73,6 +73,9 @@ func (m *MockChain) GetRawMempool(ctx context.Context) (spec.RawMempool, error) 
 func (m *MockChain) GetRawMempoolTxList(ctx context.Context) ([]string, error) {
 	return []string{}, nil
 }
+func (m *MockChain) GetMempoolEntry(ctx context.Context, txID string) (spec.RawMempoolTx, error) {
+	return spec.RawMempoolTx{}, nil
+}
 func (m *MockChain) GetRawTransaction(ctx context.Context, txID string) (doge.BlockTx, error) {
 	return doge.BlockTx{}, nil
 }

@@ -22,31 +22,56 @@ const WAIT_FOR_SYNC_RETRY_DELAY = 30 * time.Second
 
 // Core RPC error codes
 const (
-	InvalidAddressOrKey   = -5  // RPC_INVALID_ADDRESS_OR_KEY (invalid address or key)
-	InvalidParameter      = -8  // RPC_INVALID_PARAMETER (invalid, missing or duplicate parameter)
-	VerifyError           = -25 // RPC_VERIFY_ERROR (general error during transaction or block submission)
-	VerifyRejected        = -26 // RPC_VERIFY_REJECTED (transaction or block was rejected by network rules)
-	AlreadyInUTXOSet      = -27 // RPC_VERIFY_ALREADY_IN_UTXO_SET (transaction already in utxo set)
-	InWarmup              = -28 // RPC_IN_WARMUP (client still warming up)
-	BlockNotFound         = -5  // deprecated (use InvalidAddressOrKey instead)
-	BlockHeightOutOfRange = -8  // deprecated (use InvalidParameter instead)
+	InvalidAddressOrKey   = -5                     // RPC_INVALID_ADDRESS_OR_KEY (invalid address or key)
+	InvalidParameter      = -8                     // RPC_INVALID_PARAMETER (invalid, missing or duplicate parameter)
+	VerifyError           = -25                    // RPC_VERIFY_ERROR (general error during transaction or block submission)
+	VerifyRejected        = -26                    // RPC_VERIFY_REJECTED (transaction or block was rejected by network rules)
+	AlreadyInUTXOSet      = -27                    // RPC_VERIFY_ALREADY_IN_UTXO_SET (transaction already in utxo set)
+	InWarmup              = -28                    // RPC_IN_WARMUP (client still warming up)
+	BlockNotFound         = -5                     // deprecated (use InvalidAddressOrKey instead)
+	BlockHeightOutOfRange = -8                     // deprecated (use InvalidParameter instead)
+	DefaultRetryCount     = 5                      // make 5 attempts by default (Core returns spurious errors)
+	DefaultRetryDelay     = 500 * time.Millisecond // 500ms between retries
 )
 
 // NewCoreRPCClient returns a Dogecoin Core Node client.
 // Thread-safe, can be shared across Goroutines.
 func NewCoreRPCClient(rpcHost string, rpcPort int, rpcUser string, rpcPass string) spec.Blockchain {
 	url := fmt.Sprintf("http://%s:%d", rpcHost, rpcPort)
-	return &CoreRPCClient{url: url, user: rpcUser, pass: rpcPass, retryDelay: 5 * time.Second}
+	return &CoreRPCClient{url: url, user: rpcUser, pass: rpcPass}
+}
+
+// ContextWithCoreRPCRetry returns a new context with a retry configuration.
+// retryCount is the number of times to retry the request, default 5 attempts (0 = infinite)
+// retryDelay is the delay between retries, default 5 seconds
+func ContextWithCoreRPCRetry(ctx context.Context, retryCount int, retryDelay time.Duration) context.Context {
+	if retryCount < 0 {
+		retryCount = 0
+	}
+	return context.WithValue(ctx, coreRPCRetryKey{}, coreRPCRetry{retryCount: retryCount, retryDelay: retryDelay})
 }
 
 type CoreRPCClient struct {
-	url            string
-	user           string
-	pass           string
-	id             atomic.Uint64 // next unique request id
-	attemptsConfig int
-	retryDelay     time.Duration
-	lock           sync.Mutex
+	url  string
+	user string
+	pass string
+	lock sync.Mutex    // to avoid concurrent requests (RPC hits Core hard)
+	id   atomic.Uint64 // next unique request id
+}
+
+// unique type for the context key
+type coreRPCRetryKey struct{}
+type coreRPCRetry struct {
+	retryCount int
+	retryDelay time.Duration
+}
+
+func getRetryConfig(ctx context.Context) (retryCount int, retryDelay time.Duration) {
+	retryConfig, ok := ctx.Value(coreRPCRetryKey{}).(coreRPCRetry)
+	if !ok {
+		return DefaultRetryCount, DefaultRetryDelay
+	}
+	return retryConfig.retryCount, retryConfig.retryDelay
 }
 
 func (c *CoreRPCClient) WaitForSync(ctx context.Context) bool {
@@ -75,16 +100,9 @@ func (c *CoreRPCClient) WaitForSync(ctx context.Context) bool {
 	}
 }
 
-func (c *CoreRPCClient) RetryMode(attempts int, delay time.Duration) spec.Blockchain {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.attemptsConfig = attempts
-	c.retryDelay = delay
-	return c
-}
-
 func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (txn spec.BlockHeader, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		var code int
 		decode := true // to get back JSON rather than HEX
@@ -96,14 +114,14 @@ func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (t
 			if code == InvalidAddressOrKey {
 				return spec.BlockHeader{}, spec.ErrBlockNotFound
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return spec.BlockHeader{}, fmt.Errorf("[CoreRPC] GetBlockHeader: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetBlockHeader: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -112,7 +130,8 @@ func (c *CoreRPCClient) GetBlockHeader(blockHash string, ctx context.Context) (t
 }
 
 func (c *CoreRPCClient) GetBlock(blockHash string, ctx context.Context) (block doge.Block, size int, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		block, size, err = c.requestBlock(ctx, blockHash)
 		if err != nil {
@@ -122,14 +141,14 @@ func (c *CoreRPCClient) GetBlock(blockHash string, ctx context.Context) (block d
 			if err == spec.ErrBlockNotFound {
 				return doge.Block{}, 0, spec.ErrBlockNotFound
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return doge.Block{}, 0, fmt.Errorf("[CoreRPC] GetBlock: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetBlock: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -158,7 +177,8 @@ func (c *CoreRPCClient) requestBlock(ctx context.Context, blockHash string) (dog
 }
 
 func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (hash string, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		var code int
 		code, err = c.Request(ctx, "getblockhash", []any{blockHeight}, &hash)
@@ -169,14 +189,14 @@ func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (ha
 			if ctx.Err() != nil {
 				return "", spec.ErrShutdown
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return "", fmt.Errorf("[CoreRPC] GetBlockHash: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetBlockHash: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -185,21 +205,22 @@ func (c *CoreRPCClient) GetBlockHash(blockHeight int64, ctx context.Context) (ha
 }
 
 func (c *CoreRPCClient) GetBestBlockHash(ctx context.Context) (blockHash string, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getbestblockhash", []any{}, &blockHash)
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", spec.ErrShutdown
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return "", fmt.Errorf("[CoreRPC] GetBestBlockHash: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetBestBlockHash: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -208,21 +229,22 @@ func (c *CoreRPCClient) GetBestBlockHash(ctx context.Context) (blockHash string,
 }
 
 func (c *CoreRPCClient) GetBlockCount(ctx context.Context) (blockCount int64, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getblockcount", []any{}, &blockCount)
 		if err != nil {
 			if ctx.Err() != nil {
 				return 0, spec.ErrShutdown
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return 0, fmt.Errorf("[CoreRPC] GetBlockCount: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetBlockCount: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -231,21 +253,22 @@ func (c *CoreRPCClient) GetBlockCount(ctx context.Context) (blockCount int64, er
 }
 
 func (c *CoreRPCClient) GetBlockchainInfo(ctx context.Context) (info spec.BlockchainInfo, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getblockchaininfo", []any{}, &info)
 		if err != nil {
 			if ctx.Err() != nil {
 				return spec.BlockchainInfo{}, spec.ErrShutdown
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return spec.BlockchainInfo{}, fmt.Errorf("[CoreRPC] GetBlockchainInfo: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetBlockchainInfo: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -254,21 +277,22 @@ func (c *CoreRPCClient) GetBlockchainInfo(ctx context.Context) (info spec.Blockc
 }
 
 func (c *CoreRPCClient) EstimateFee(ctx context.Context, confirmTarget int) (feePerKB koinu.Koinu, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "estimatefee", []any{confirmTarget}, &feePerKB)
 		if err != nil {
 			if ctx.Err() != nil {
 				return 0, spec.ErrShutdown
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return 0, fmt.Errorf("[CoreRPC] EstimateFee: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] EstimateFee: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -280,21 +304,22 @@ func (c *CoreRPCClient) EstimateFee(ctx context.Context, confirmTarget int) (fee
 }
 
 func (c *CoreRPCClient) GetRawMempool(ctx context.Context) (mem spec.RawMempool, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getrawmempool", []any{true}, &mem)
 		if err != nil {
 			if ctx.Err() != nil {
 				return spec.RawMempool{}, spec.ErrShutdown
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return spec.RawMempool{}, fmt.Errorf("[CoreRPC] GetRawMempool: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetRawMempool: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -303,21 +328,47 @@ func (c *CoreRPCClient) GetRawMempool(ctx context.Context) (mem spec.RawMempool,
 }
 
 func (c *CoreRPCClient) GetRawMempoolTxList(ctx context.Context) (txlist []string, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "getrawmempool", []any{false}, &txlist)
 		if err != nil {
 			if ctx.Err() != nil {
 				return []string{}, spec.ErrShutdown
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return []string{}, fmt.Errorf("[CoreRPC] GetRawMempoolTxList: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetRawMempoolTxList: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
+			continue
+		}
+		break // success
+	}
+	return
+}
+
+// GetMempoolEntry returns a single mempool entry (transaction) from the Core Node.
+func (c *CoreRPCClient) GetMempoolEntry(ctx context.Context, txID string) (tx spec.RawMempoolTx, err error) {
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
+	for {
+		_, err = c.Request(ctx, "getmempoolentry", []any{txID}, &tx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return spec.RawMempoolTx{}, spec.ErrShutdown
+			}
+			if retryCount != 0 { // infinite retries
+				attempts -= 1
+				if attempts <= 0 {
+					return spec.RawMempoolTx{}, fmt.Errorf("[CoreRPC] GetMempoolEntry: %w", err)
+				}
+			}
+			log.Printf(`[CoreRPC] GetMempoolEntry: %v (will retry)\n`, err)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -326,7 +377,8 @@ func (c *CoreRPCClient) GetRawMempoolTxList(ctx context.Context) (txlist []strin
 }
 
 func (c *CoreRPCClient) GetRawTransaction(ctx context.Context, txID string) (tx doge.BlockTx, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		tx, err = c.requestRawTransaction(ctx, txID)
 		if err != nil {
@@ -336,14 +388,14 @@ func (c *CoreRPCClient) GetRawTransaction(ctx context.Context, txID string) (tx 
 			if err == spec.ErrTxNotFound {
 				return doge.BlockTx{}, spec.ErrTxNotFound
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return doge.BlockTx{}, fmt.Errorf("[CoreRPC] GetRawTransaction: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] GetRawTransaction: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success
@@ -372,21 +424,22 @@ func (c *CoreRPCClient) requestRawTransaction(ctx context.Context, txID string) 
 }
 
 func (c *CoreRPCClient) SendRawTransaction(ctx context.Context, txHex string) (txid string, err error) {
-	attempts := c.attemptsConfig
+	retryCount, retryDelay := getRetryConfig(ctx)
+	attempts := retryCount
 	for {
 		_, err = c.Request(ctx, "sendrawtransaction", []any{txHex}, &txid)
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", spec.ErrShutdown
 			}
-			if c.attemptsConfig != 0 { // infinite retries
+			if retryCount != 0 { // infinite retries
 				attempts -= 1
 				if attempts <= 0 {
 					return "", fmt.Errorf("[CoreRPC] SendRawTransaction: %w", err)
 				}
 			}
 			log.Printf(`[CoreRPC] SendRawTransaction: %v (will retry)\n`, err)
-			SleepWithContext(ctx, c.retryDelay)
+			SleepWithContext(ctx, retryDelay)
 			continue
 		}
 		break // success

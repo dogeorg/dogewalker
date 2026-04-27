@@ -21,12 +21,6 @@ type Blockchain interface {
 	// Returns true if the context is cancelled, false otherwise.
 	WaitForSync(ctx context.Context) bool
 
-	// RetryMode configures the number of retries, default 0 (Infinite)
-	// Core returns a lot of spurious errors, so this should be more than 1.
-	// When Core is starting up or syncing, most APIs fail (they return 500)
-	// For a web client with client-side retries, use a low limit (2 or 3)
-	RetryMode(attempts int, delay time.Duration) Blockchain
-
 	// GetBlockHeader gets a `BlockHeader` (struct) from a block hash.
 	// The 'Confirmations' field will be -1 if the block is off-chain (not on the main chain)
 	// which is how DogeWalker detects chain reorganisation, i.e. a rollback.
@@ -61,6 +55,9 @@ type Blockchain interface {
 
 	// GetRawMempoolTxList returns the raw mempool transaction list from the Core Node.
 	GetRawMempoolTxList(ctx context.Context) (txlist []string, err error)
+
+	// GetMempoolEntry returns a single mempool entry (transaction) from the Core Node.
+	GetMempoolEntry(ctx context.Context, txID string) (tx RawMempoolTx, err error)
 
 	// GetRawTransaction returns the raw transaction data from the Core Node.
 	GetRawTransaction(ctx context.Context, txID string) (tx doge.BlockTx, err error)
