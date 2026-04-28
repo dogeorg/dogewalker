@@ -521,15 +521,15 @@ type rpcRequest struct {
 type rpcResponse struct {
 	Id     uint64           `json:"id"`
 	Result *json.RawMessage `json:"result"`
-	Error  rpcError         `json:"error"`
+	Error  RPCError         `json:"error"`
 }
 
-type rpcError struct {
+type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
-func (e rpcError) Error() string {
+func (e RPCError) Error() string {
 	return fmt.Sprintf("json-rpc error: %v, %v", e.Code, e.Message)
 }
 
