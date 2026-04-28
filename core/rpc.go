@@ -533,6 +533,13 @@ func (e RPCError) Error() string {
 	return fmt.Sprintf("json-rpc error: %v, %v", e.Code, e.Message)
 }
 
+func (e RPCError) Is(target error) bool {
+	if te, ok := target.(RPCError); ok && te.Code == e.Code {
+		return true
+	}
+	return false
+}
+
 func SleepWithContext(ctx context.Context, duration time.Duration) (cancelled bool) {
 	select {
 	case <-ctx.Done(): // receive context cancel
