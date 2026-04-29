@@ -111,6 +111,7 @@ type RawMempool = map[string]RawMempoolTx
 // RawMempoolTx is the response from the `getrawmempool` Core API.
 // https://developer.bitcoin.org/reference/rpc/getrawmempool.html
 type RawMempoolTx struct {
+	VSize           int64       `json:"vsize"` // virtual transaction size as defined in BIP 141
 	Time            int64       `json:"time"`
 	Height          int64       `json:"height"`
 	Fee             koinu.Koinu `json:"fee"`
