@@ -113,13 +113,13 @@ type RawMempoolTx struct {
 	Size            int64       `json:"size"`               // transaction size in bytes
 	Time            int64       `json:"time"`               // UNIX epoch time when added to mempool
 	Height          int64       `json:"height"`             // block height when added to mempool
-	Fee             koinu.Koinu `json:"fee"`                // transaction fee in Koinu
+	Fee             koinu.Koinu `json:"fee"`                // transaction fee in DOGE (e.g. 0.123 DOGE)
 	DescendantCount int         `json:"descendantcount"`    // number of in-mempool descendant transactions (including this one)
 	DescendantSize  int64       `json:"descendantsize"`     // virtual transaction size of in-mempool descendants (including this one)
-	DescendantFees  koinu.Koinu `json:"descendantfees"`     // modified fees of in-mempool descendants (including this one)
+	DescendantFees  int64       `json:"descendantfees"`     // modified fees of in-mempool descendants, including this one (in Koinu, e.g. 123000000)
 	AncestorCount   int         `json:"ancestorcount"`      // number of in-mempool ancestor transactions (including this one)
 	AncestorSize    int64       `json:"ancestorsize"`       // virtual transaction size of in-mempool ancestors (including this one)
-	AncestorFees    koinu.Koinu `json:"ancestorfees"`       // modified fees of in-mempool ancestors (including this one)
+	AncestorFees    int64       `json:"ancestorfees"`       // modified fees of in-mempool ancestors, including this one (in Koinu, e.g. 123000000)
 	Depends         []string    `json:"depends"`            // unconfirmed transactions used as inputs for this transaction
 	Replaceable     bool        `json:"bip125-replaceable"` // Whether this transaction could be replaced with a different transaction
 	Unbroadcast     bool        `json:"unbroadcast"`        // Whether this transaction is currently unbroadcast (initial broadcast not yet acknowledged by any peers)
