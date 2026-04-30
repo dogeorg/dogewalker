@@ -111,30 +111,33 @@ type RawMempool = map[string]RawMempoolTx
 // RawMempoolTx is the response from the `getrawmempool` Core API.
 // https://developer.bitcoin.org/reference/rpc/getrawmempool.html
 type RawMempoolTx struct {
-	VSize           int64       `json:"vsize"` // virtual transaction size as defined in BIP 141
-	Time            int64       `json:"time"`
-	Height          int64       `json:"height"`
-	Fee             koinu.Koinu `json:"fee"`
-	DescendantCount int         `json:"descendantcount"`
-	DescendantSize  int64       `json:"descendantsize"`
-	DescendantFees  int64       `json:"descendantfees"`
-	AncestorCount   int         `json:"ancestorcount"`
-	AncestorSize    int64       `json:"ancestorsize"`
-	AncestorFees    int64       `json:"ancestorfees"`
-	Depends         []string    `json:"depends"`
-	Replaceable     bool        `json:"bip125-replaceable"`
-	Unbroadcast     bool        `json:"unbroadcast"`
+	Size            int64       `json:"size"`               // transaction size in bytes
+	Time            int64       `json:"time"`               // UNIX epoch time when added to mempool
+	Height          int64       `json:"height"`             // block height when added to mempool
+	Fee             koinu.Koinu `json:"fee"`                // transaction fee in Koinu
+	DescendantCount int         `json:"descendantcount"`    // number of in-mempool descendant transactions (including this one)
+	DescendantSize  int64       `json:"descendantsize"`     // virtual transaction size of in-mempool descendants (including this one)
+	DescendantFees  int64       `json:"descendantfees"`     // modified fees of in-mempool descendants (including this one)
+	AncestorCount   int         `json:"ancestorcount"`      // number of in-mempool ancestor transactions (including this one)
+	AncestorSize    int64       `json:"ancestorsize"`       // virtual transaction size of in-mempool ancestors (including this one)
+	AncestorFees    int64       `json:"ancestorfees"`       // modified fees of in-mempool ancestors (including this one)
+	Depends         []string    `json:"depends"`            // unconfirmed transactions used as inputs for this transaction
+	Replaceable     bool        `json:"bip125-replaceable"` // Whether this transaction could be replaced with a different transaction
+	Unbroadcast     bool        `json:"unbroadcast"`        // Whether this transaction is currently unbroadcast (initial broadcast not yet acknowledged by any peers)
 }
 
 // MempoolEntry is the response from the `getmempoolentry` Core API.
 type MempoolEntry struct {
-	Fee             koinu.Koinu `json:"fee"`
-	ModifiedFee     koinu.Koinu `json:"modifiedfee"`
+	Size            int64       `json:"size"` // transaction size in bytes
 	Time            time.Time   `json:"time"`
 	Height          int64       `json:"height"`
-	DescendantCount int         `json:"descendantcount"`
-	DescendantSize  int64       `json:"descendantsize"`
-	DescendantFees  int64       `json:"descendantfees"`
+	Fee             koinu.Koinu `json:"fee"`
+	DescendantCount int         `json:"descendantcount"` // number of in-mempool descendant transactions (including this one)
+	DescendantSize  int64       `json:"descendantsize"`  // virtual transaction size of in-mempool descendants (including this one)
+	DescendantFees  int64       `json:"descendantfees"`  // modified fees of in-mempool descendants (including this one)
+	AncestorCount   int         `json:"ancestorcount"`   // number of in-mempool ancestor transactions (including this one)
+	AncestorSize    int64       `json:"ancestorsize"`    // virtual transaction size of in-mempool ancestors (including this one)
+	AncestorFees    int64       `json:"ancestorfees"`    // modified fees of in-mempool ancestors (including this one)
 	Depends         []string    `json:"depends"`
 	Replaceable     bool        `json:"bip125-replaceable"`
 	Unbroadcast     bool        `json:"unbroadcast"`
